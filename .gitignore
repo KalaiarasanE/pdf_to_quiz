@@ -37,3 +37,6 @@ dist-ssr
 
 # Nested duplicate folder
 pdf-quiz-master-main/
+
+# Vercel build output
+.vercel/
