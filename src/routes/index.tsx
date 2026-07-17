@@ -2273,9 +2273,6 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
 
     // 2. Devanagari (Hindi) shaping
     shaped = shaped.replace(/([क-ह])\u093F/g, "\u093F$1"); // ि
-    shaped = shaped.replace(/([क-ह]्[क-ह])\u093F/g, "\u093F$1");
-
-    // 3. Malayalam shaping
     shaped = shaped.replace(/([ക-ഹ])\u0D46/g, "\u0D46$1"); // െ
     shaped = shaped.replace(/([ക-ഹ])\u0D47/g, "\u0D47$1"); // േ
     shaped = shaped.replace(/([ക-ഹ])\u0D48/g, "\u0D48$1"); // ൈ
@@ -2350,11 +2347,13 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
 
         const pageWidth = doc.internal.pageSize.getWidth();
         const pageHeight = doc.internal.pageSize.getHeight();
-        const marginX = 30; // 30pt Left/Right margin
-        const marginY = 25; // 25pt Top/Bottom margin
+
+        // Margins: Top/Bottom 20mm (~56.7pt), Left/Right 18mm (~51pt)
+        const marginX = 51.0;
+        const marginY = 56.7;
         const contentWidth = pageWidth - marginX * 2;
 
-        let y = 30;
+        let y = marginY;
 
         const setSafeFont = (style: "normal" | "bold" | "italic" | "bolditalic") => {
           if (fontName === "helvetica") {
@@ -2368,13 +2367,13 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
         setSafeFont("bold");
         doc.setFontSize(18);
         doc.text(`Extracted ${list.length} Questions`, marginX, y);
-        y += 18;
+        y += 25;
 
         doc.setFontSize(10);
         setSafeFont("normal");
         const shapedPdfName = fontName !== "helvetica" ? shapeIndicText(pdfName) : pdfName;
         doc.text(`Source Document: ${shapedPdfName}`, marginX, y);
-        y += 25;
+        y += 30;
 
         // Wrap and shape helper to prevent splitting vowel signs across lines
         const wrapAndShape = (text: string, maxWidth: number): string[] => {
@@ -2402,30 +2401,26 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
 
           const explanationLines = expText ? wrapAndShape(expText, contentWidth) : [];
 
-          // Calculate precise block height for pagination
+          // Calculate precise block height for pagination (1.6 line height)
           let blockHeight = 0;
           blockHeight += 15; // divider line space
-          blockHeight += 16; // Q1 label height + space
-          blockHeight += 8; // spacer
-          blockHeight += questionLines.length * 15; // question text height
-          blockHeight += 10; // spacer
-          blockHeight += optALines.length * 14 + 4; // Option A + spacing
-          blockHeight += optBLines.length * 14 + 4; // Option B + spacing
-          blockHeight += optCLines.length * 14 + 4; // Option C + spacing
-          blockHeight += optDLines.length * 14; // Option D
-          blockHeight += 10; // spacer
-          blockHeight += 14; // "Answer" label height
-          blockHeight += 6; // spacer
-          blockHeight += answerLines.length * 14; // answer text height
+          blockHeight += 28.8 + 10; // Question Number label (18pt) + Paragraph Gap
+          blockHeight += questionLines.length * 28.8 + 10; // Question Text (18pt) + Paragraph Gap
+          blockHeight += optALines.length * 25.6 + 10; // Option A (16pt) + Paragraph Gap
+          blockHeight += optBLines.length * 25.6 + 10; // Option B (16pt) + Paragraph Gap
+          blockHeight += optCLines.length * 25.6 + 10; // Option C (16pt) + Paragraph Gap
+          blockHeight += optDLines.length * 25.6; // Option D (16pt)
+          blockHeight += 10; // Paragraph Gap
+          blockHeight += 25.6 + 10; // "Answer:" label (16pt) + Paragraph Gap
+          blockHeight += answerLines.length * 25.6; // Answer Text (16pt)
 
           if (expText) {
-            blockHeight += 10; // spacer
-            blockHeight += 14; // "Explanation" label height
-            blockHeight += 6; // spacer
-            blockHeight += explanationLines.length * 13; // explanation text height
+            blockHeight += 10; // Paragraph Gap
+            blockHeight += 24.0 + 10; // "Explanation:" label (15pt) + Paragraph Gap
+            blockHeight += explanationLines.length * 24.0; // Explanation Text (15pt)
           }
 
-          blockHeight += 20; // block padding
+          blockHeight += 20; // Question Gap (bottom spacing)
 
           // Page break check (prevents splitting a question block across pages)
           if (y + blockHeight > pageHeight - marginY) {
@@ -2433,7 +2428,7 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
             if (base64Font && fontFileName && fontName) {
               doc.setFont(fontName, "normal");
             }
-            y = marginY + 15;
+            y = marginY;
           }
 
           // Separator line
@@ -2442,65 +2437,66 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
           doc.line(marginX, y, pageWidth - marginX, y);
           y += 15;
 
-          // Question Number (e.g. Q1)
-          doc.setFontSize(11);
+          // Question Number (e.g. 1) - 18px Left Aligned
+          doc.setFontSize(18);
           setSafeFont("bold");
-          doc.text(`Q${idx + 1}`, marginX, y);
-          y += 16;
+          doc.text(`${idx + 1}`, marginX, y);
+          y += 28.8 + 10;
 
-          // Question Text
-          setSafeFont("normal");
+          // Question Text - 18px Semi Bold Left Aligned
+          setSafeFont("bold");
           questionLines.forEach((line) => {
-            doc.text(line, marginX, y, { align: "justify" });
-            y += 15;
+            doc.text(line, marginX, y);
+            y += 28.8;
           });
+          y += 10;
 
-          // Options
-          y += 5;
-          const drawLines = (lines: string[]) => {
+          // Options - 16px Regular Left Aligned
+          doc.setFontSize(16);
+          setSafeFont("normal");
+
+          const drawOptionGroup = (lines: string[], addGap: boolean) => {
             lines.forEach((line) => {
               doc.text(line, marginX, y);
-              y += 14;
+              y += 25.6;
             });
+            if (addGap) y += 10;
           };
 
-          drawLines(optALines);
-          y += 4;
-          drawLines(optBLines);
-          y += 4;
-          drawLines(optCLines);
-          y += 4;
-          drawLines(optDLines);
-
-          // Answer Label
+          drawOptionGroup(optALines, true);
+          drawOptionGroup(optBLines, true);
+          drawOptionGroup(optCLines, true);
+          drawOptionGroup(optDLines, false);
           y += 10;
-          doc.setFontSize(10);
-          setSafeFont("bold");
-          doc.text("Answer", marginX, y);
-          y += 14;
 
-          // Answer Text
-          setSafeFont("normal");
+          // Answer Label - 16px Bold Left Aligned
+          doc.setFontSize(16);
+          setSafeFont("bold");
+          doc.text("Answer:", marginX, y);
+          y += 25.6 + 10;
+
+          // Answer Text - 16px Bold Left Aligned
           answerLines.forEach((line) => {
             doc.text(line, marginX, y);
-            y += 14;
+            y += 25.6;
           });
 
-          // Explanation (if present)
+          // Explanation (if present) - 15px Regular Left Aligned
           if (expText) {
             y += 10;
+            doc.setFontSize(15);
             setSafeFont("bolditalic");
-            doc.text("Explanation", marginX, y);
-            y += 14;
+            doc.text("Explanation:", marginX, y);
+            y += 24.0 + 10;
 
             setSafeFont("italic");
             explanationLines.forEach((line) => {
               doc.text(line, marginX, y);
-              y += 13;
+              y += 24.0;
             });
           }
 
-          y += 15;
+          y += 20; // Question Gap
         });
 
         doc.save(`${pdfName.replace(".pdf", "")}_quiz.pdf`);
