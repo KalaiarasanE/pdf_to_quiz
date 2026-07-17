@@ -2341,7 +2341,7 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
 
         if (base64Font && fontFileName && fontName) {
           doc.addFileToVFS(fontFileName, base64Font);
-          doc.addFont(fontFileName, fontName, "normal");
+          doc.addFont(fontFileName, fontName, "normal", "Identity-H");
           doc.setFont(fontName, "normal");
         }
 
