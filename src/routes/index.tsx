@@ -27,6 +27,17 @@ import {
   HelpCircle,
   Sun,
   Moon,
+  Menu,
+  X,
+  Lock,
+  Mail,
+  History,
+  Trophy,
+  User,
+  LogOut,
+  PlusCircle,
+  Eye,
+  Edit3,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -44,6 +55,7 @@ import {
 } from "@/components/ui/select";
 import { Toaster } from "@/components/ui/sonner";
 import { type MCQ } from "@/lib/ai-stream.server";
+import { getSupabaseClient, getSupabaseConfig } from "@/lib/supabase";
 
 import html2canvas from "html2canvas";
 
@@ -57,7 +69,28 @@ export const Route = createFileRoute("/")({
   component: App,
 });
 
-type Tab = "dashboard" | "generate" | "settings";
+export type SavedQuiz = {
+  id: string;
+  pdf_name: string;
+  language: string;
+  num_questions: number;
+  questions: MCQ[];
+  created_at: string;
+};
+
+export type MockTestAttempt = {
+  id: string;
+  quiz_id: string;
+  pdf_name: string;
+  score: number;
+  correct_count: number;
+  total_questions: number;
+  time_seconds: number;
+  created_at: string;
+};
+
+type Tab = "dashboard" | "generate" | "recent-activity" | "mock-tests" | "settings" | "profile";
+
 type Stage = "upload" | "extracting" | "configuring" | "generating" | "review" | "test" | "results";
 
 type PdfMeta = {
@@ -73,7 +106,10 @@ type PdfMeta = {
   pageList?: { pageNum: number; text: string }[];
   fileRef?: File;
   lastModified?: number;
+  hasLegacyTamil?: boolean;
+  fontEncoding?: string;
 };
+
 
 type DashboardStats = {
   uploadedPdfs: number;
@@ -304,6 +340,747 @@ function App() {
   const [apiKey, setApiKey] = useState<string>("");
   const [apiProvider, setApiProvider] = useState<"gemini" | "openai" | "lovable">("gemini");
   const [modelName, setModelName] = useState<string>("gemini-3.1-flash-lite");
+  const [selectedLanguage, setSelectedLanguage] = useState<string>("");
+
+
+  // Supabase & Auth states
+  const [user, setUser] = useState<any>(null);
+  const [supabaseClient, setSupabaseClient] = useState<any>(null);
+  const [recentQuizzes, setRecentQuizzes] = useState<SavedQuiz[]>([]);
+  const [mockAttempts, setMockAttempts] = useState<MockTestAttempt[]>([]);
+
+  // Navigation & responsive states
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  // Global Upload states
+  const [globalUploading, setGlobalUploading] = useState(false);
+  const [globalUploadProgress, setGlobalUploadProgress] = useState(0);
+  const [globalUploadStage, setGlobalUploadStage] = useState("");
+  const globalFileInputRef = useRef<HTMLInputElement>(null);
+
+  // Initialize Supabase & Auth listener
+  useEffect(() => {
+    const client = getSupabaseClient();
+    setSupabaseClient(client);
+    if (client) {
+      client.auth.getSession().then(({ data: { session } }) => {
+        setUser(session?.user ?? null);
+        fetchQuizzes(session?.user ?? null, client);
+        fetchAttempts(session?.user ?? null, client);
+      });
+
+      const { data: { subscription } } = client.auth.onAuthStateChange((_event, session) => {
+        setUser(session?.user ?? null);
+        fetchQuizzes(session?.user ?? null, client);
+        fetchAttempts(session?.user ?? null, client);
+      });
+
+      return () => subscription.unsubscribe();
+    } else {
+      fetchQuizzes(null, null);
+      fetchAttempts(null, null);
+    }
+  }, []);
+
+  const fetchQuizzes = async (currentUser: any, client: any) => {
+    if (!client || !currentUser) {
+      const local = localStorage.getItem("quizcrack_quizzes");
+      if (local) {
+        try { setRecentQuizzes(JSON.parse(local)); } catch (e) {}
+      } else {
+        setRecentQuizzes([]);
+      }
+      return;
+    }
+
+    try {
+      const { data, error } = await client
+        .from("quizzes")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      setRecentQuizzes(data || []);
+    } catch (e) {
+      console.error("Error fetching quizzes:", e);
+      const local = localStorage.getItem("quizcrack_quizzes");
+      if (local) {
+        try { setRecentQuizzes(JSON.parse(local)); } catch (e) {}
+      }
+    }
+  };
+
+  const fetchAttempts = async (currentUser: any, client: any) => {
+    if (!client || !currentUser) {
+      const local = localStorage.getItem("quizcrack_mock_attempts");
+      if (local) {
+        try { setMockAttempts(JSON.parse(local)); } catch (e) {}
+      } else {
+        setMockAttempts([]);
+      }
+      return;
+    }
+
+    try {
+      const { data, error } = await client
+        .from("mock_attempts")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      setMockAttempts(data || []);
+    } catch (e) {
+      console.error("Error fetching attempts:", e);
+      const local = localStorage.getItem("quizcrack_mock_attempts");
+      if (local) {
+        try { setMockAttempts(JSON.parse(local)); } catch (e) {}
+      }
+    }
+  };
+
+  // Helper utility for UUID identification
+  const isUuid = (id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+
+  // Central Quiz Operations
+  const saveGeneratedQuiz = async (pdfName: string, questionsList: MCQ[], language: string) => {
+    const newQuiz: SavedQuiz = {
+      id: Math.random().toString(36).substring(2, 9),
+      pdf_name: pdfName,
+      language: language || "English",
+      num_questions: questionsList.length,
+      questions: questionsList,
+      created_at: new Date().toISOString(),
+    };
+
+    // Save locally
+    const local = localStorage.getItem("quizcrack_quizzes");
+    let currentLocal: SavedQuiz[] = [];
+    if (local) {
+      try { currentLocal = JSON.parse(local); } catch (e) {}
+    }
+    const updatedLocal = [newQuiz, ...currentLocal];
+    localStorage.setItem("quizcrack_quizzes", JSON.stringify(updatedLocal));
+    setRecentQuizzes(updatedLocal);
+
+    // Save to Supabase if logged in
+    if (user && supabaseClient) {
+      try {
+        const { data, error } = await supabaseClient
+          .from("quizzes")
+          .insert({
+            pdf_name: pdfName,
+            language: language || "English",
+            num_questions: questionsList.length,
+            questions: questionsList,
+            user_id: user.id,
+          })
+          .select();
+        if (error) throw error;
+        if (data && data[0]) {
+          setRecentQuizzes((prev) =>
+            prev.map((q) => (q.id === newQuiz.id ? data[0] : q))
+          );
+        }
+      } catch (e) {
+        console.error("Error saving quiz to Supabase:", e);
+      }
+    }
+  };
+
+  const saveMockAttempt = async (
+    pdfName: string,
+    totalQuestions: number,
+    correctCount: number,
+    timeSec: number
+  ) => {
+    const score = Math.round((correctCount / totalQuestions) * 100);
+    const newAttempt: MockTestAttempt = {
+      id: Math.random().toString(36).substring(2, 9),
+      quiz_id: "",
+      pdf_name: pdfName,
+      score,
+      correct_count: correctCount,
+      total_questions: totalQuestions,
+      time_seconds: timeSec,
+      created_at: new Date().toISOString(),
+    };
+
+    // Save locally
+    const local = localStorage.getItem("quizcrack_mock_attempts");
+    let currentLocal: MockTestAttempt[] = [];
+    if (local) {
+      try { currentLocal = JSON.parse(local); } catch (e) {}
+    }
+    const updatedLocal = [newAttempt, ...currentLocal];
+    localStorage.setItem("quizcrack_mock_attempts", JSON.stringify(updatedLocal));
+    setMockAttempts(updatedLocal);
+
+    // Save to Supabase
+    if (user && supabaseClient) {
+      try {
+        const { error } = await supabaseClient.from("mock_attempts").insert({
+          pdf_name: pdfName,
+          score,
+          correct_count: correctCount,
+          total_questions: totalQuestions,
+          time_seconds: timeSec,
+          user_id: user.id,
+        });
+        if (error) throw error;
+        fetchAttempts(user, supabaseClient);
+      } catch (e) {
+        console.error("Error saving mock attempt to Supabase:", e);
+      }
+    }
+  };
+
+  const renameQuiz = async (id: string, newName: string) => {
+    const updated = recentQuizzes.map((q) => (q.id === id ? { ...q, pdf_name: newName } : q));
+    setRecentQuizzes(updated);
+    localStorage.setItem("quizcrack_quizzes", JSON.stringify(updated));
+
+    if (user && supabaseClient && isUuid(id)) {
+      try {
+        const { error } = await supabaseClient
+          .from("quizzes")
+          .update({ pdf_name: newName })
+          .eq("id", id);
+        if (error) throw error;
+        toast.success("Quiz renamed successfully!");
+      } catch (e) {
+        console.error("Error renaming in Supabase:", e);
+        toast.error("Failed to rename on server, updated locally.");
+      }
+    } else {
+      toast.success("Quiz renamed successfully!");
+    }
+  };
+
+  const duplicateQuiz = async (quiz: SavedQuiz) => {
+    const duplicatedQuiz: SavedQuiz = {
+      id: Math.random().toString(36).substring(2, 9),
+      pdf_name: `${quiz.pdf_name} (Copy)`,
+      language: quiz.language,
+      num_questions: quiz.num_questions,
+      questions: JSON.parse(JSON.stringify(quiz.questions)),
+      created_at: new Date().toISOString(),
+    };
+
+    const updated = [duplicatedQuiz, ...recentQuizzes];
+    setRecentQuizzes(updated);
+    localStorage.setItem("quizcrack_quizzes", JSON.stringify(updated));
+
+    if (user && supabaseClient) {
+      try {
+        const { data, error } = await supabaseClient
+          .from("quizzes")
+          .insert({
+            pdf_name: duplicatedQuiz.pdf_name,
+            language: duplicatedQuiz.language,
+            num_questions: duplicatedQuiz.num_questions,
+            questions: duplicatedQuiz.questions,
+            user_id: user.id,
+          })
+          .select();
+        if (error) throw error;
+        if (data && data[0]) {
+          setRecentQuizzes((prev) =>
+            prev.map((q) => (q.id === duplicatedQuiz.id ? data[0] : q))
+          );
+        }
+        toast.success("Quiz duplicated successfully!");
+      } catch (e) {
+        console.error("Error duplicating in Supabase:", e);
+        toast.error("Duplicated locally (failed to sync to server).");
+      }
+    } else {
+      toast.success("Quiz duplicated successfully!");
+    }
+  };
+
+  const deleteQuiz = async (id: string) => {
+    const updated = recentQuizzes.filter((q) => q.id !== id);
+    setRecentQuizzes(updated);
+    localStorage.setItem("quizcrack_quizzes", JSON.stringify(updated));
+
+    if (user && supabaseClient && isUuid(id)) {
+      try {
+        const { error } = await supabaseClient.from("quizzes").delete().eq("id", id);
+        if (error) throw error;
+        toast.success("Quiz deleted successfully!");
+      } catch (e) {
+        console.error("Error deleting in Supabase:", e);
+        toast.error("Failed to delete from server.");
+      }
+    } else {
+      toast.success("Quiz deleted successfully!");
+    }
+  };
+
+  // Central Download Functions for shared use
+  const handleDownloadPdf = (pdfName: string, questions: MCQ[]) => {
+    const fullQuestionsText =
+      pdfName +
+      " " +
+      questions.map((m) => m.question + " " + m.options.join(" ") + " " + m.correctAnswer).join(" ");
+
+    let fontName = "helvetica";
+    let fontUrl = "";
+    let fontFileName = "";
+
+    if (/[\u0B80-\u0BFF]/.test(fullQuestionsText)) {
+      fontName = "NotoSansTamil";
+      fontFileName = "NotoSansTamil-Regular.ttf";
+      fontUrl =
+        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansTamil/NotoSansTamil-Regular.ttf";
+    } else if (/[\u0900-\u097F]/.test(fullQuestionsText)) {
+      fontName = "NotoSansDevanagari";
+      fontFileName = "NotoSansDevanagari-Regular.ttf";
+      fontUrl =
+        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Regular.ttf";
+    } else if (/[\u0C00-\u0C7F]/.test(fullQuestionsText)) {
+      fontName = "NotoSansTelugu";
+      fontFileName = "NotoSansTelugu-Regular.ttf";
+      fontUrl =
+        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansTelugu/NotoSansTelugu-Regular.ttf";
+    } else if (/[\u0C80-\u0CFF]/.test(fullQuestionsText)) {
+      fontName = "NotoSansKannada";
+      fontFileName = "NotoSansKannada-Regular.ttf";
+      fontUrl =
+        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansKannada/NotoSansKannada-Regular.ttf";
+    } else if (/[\u0D00-\u0D7F]/.test(fullQuestionsText)) {
+      fontName = "NotoSansMalayalam";
+      fontFileName = "NotoSansMalayalam-Regular.ttf";
+      fontUrl =
+        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansMalayalam/NotoSansMalayalam-Regular.ttf";
+    } else if (Array.from(fullQuestionsText).some((char) => char.charCodeAt(0) > 127)) {
+      fontName = "NotoSans";
+      fontFileName = "NotoSans-Regular.ttf";
+      fontUrl =
+        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSans/NotoSans-Regular.ttf";
+    }
+
+    const generateAndSave = (base64Font?: string) => {
+      try {
+        const doc = new jsPDF({
+          orientation: "p",
+          unit: "pt",
+          format: "a4",
+          compress: true,
+        });
+
+        if (base64Font && fontFileName && fontName) {
+          doc.addFileToVFS(fontFileName, base64Font);
+          doc.addFont(fontFileName, fontName, "normal", "Identity-H");
+          doc.setFont(fontName, "normal");
+        }
+
+        const pageWidth = doc.internal.pageSize.getWidth();
+        const pageHeight = doc.internal.pageSize.getHeight();
+        const marginX = 51.0;
+        const marginY = 56.7;
+        const contentWidth = pageWidth - marginX * 2;
+
+        let y = marginY;
+
+        const setSafeFont = (style: "normal" | "bold" | "italic" | "bolditalic") => {
+          if (fontName === "helvetica") {
+            doc.setFont("helvetica", style);
+          } else {
+            doc.setFont(fontName, "normal");
+          }
+        };
+
+        const shapeIndicText = (text: string) => {
+          let shaped = text;
+          shaped = shaped.replace(/([க-ஹ])\u0BC6/g, "\u0BC6$1");
+          shaped = shaped.replace(/([க-ஹ])\u0BC7/g, "\u0BC7$1");
+          shaped = shaped.replace(/([க-ஹ])\u0BC8/g, "\u0BC8$1");
+          shaped = shaped.replace(/([க-ஹ])\u0BCA/g, "\u0BC6$1\u0BBE");
+          shaped = shaped.replace(/([க-ஹ])\u0BCB/g, "\u0BC7$1\u0BBE");
+          shaped = shaped.replace(/([க-ஹ])\u0BCC/g, "\u0BC6$1\u0BD7");
+          shaped = shaped.replace(/([क-ह])\u093F/g, "\u093F$1");
+          shaped = shaped.replace(/([ക-ഹ])\u0D46/g, "\u0D46$1");
+          shaped = shaped.replace(/([ക-ഹ])\u0D47/g, "\u0D47$1");
+          shaped = shaped.replace(/([ക-ഹ])\u0D48/g, "\u0D48$1");
+          shaped = shaped.replace(/([ക-ഹ])\u0D4A/g, "\u0D46$1\u0D3E");
+          shaped = shaped.replace(/([ക-ഹ])\u0D4B/g, "\u0D47$1\u0D3E");
+          return shaped;
+        };
+
+        const drawShapedText = (text: string, tx: number, ty: number) => {
+          if (fontName !== "NotoSansTamil") {
+            doc.text(text, tx, ty);
+            return;
+          }
+          let currentX = tx;
+          const fontSize = doc.getFontSize();
+          const pulliRadius = fontSize * 0.055;
+          const pulliYOffset = fontSize * 0.65;
+          for (let i = 0; i < text.length; i++) {
+            const char = text[i];
+            const nextChar = text[i + 1];
+            if (char === "\u0BCD") continue;
+            doc.text(char, currentX, ty);
+            const charWidth = doc.getTextWidth(char);
+            const centerX = currentX + charWidth / 2;
+            if (nextChar === "\u0BCD") {
+              doc.setFillColor(0, 0, 0);
+              doc.circle(centerX, ty - pulliYOffset, pulliRadius, "F");
+            }
+            if (nextChar === "\u0BC1" || nextChar === "\u0BC2") {
+              const shiftAmount = charWidth * 0.52;
+              const vowelX = currentX + charWidth - shiftAmount;
+              doc.text(nextChar, vowelX, ty);
+              i++;
+            }
+            currentX += charWidth;
+          }
+        };
+
+        const wrapAndShape = (text: string, maxWidth: number): string[] => {
+          const rawLines = doc.splitTextToSize(text, maxWidth) as string[];
+          return rawLines.map((line) => (fontName !== "helvetica" ? shapeIndicText(line) : line));
+        };
+
+        // Header
+        setSafeFont("bold");
+        doc.setFontSize(18);
+        doc.text(`Extracted ${questions.length} Questions`, marginX, y);
+        y += 25;
+
+        doc.setFontSize(10);
+        setSafeFont("normal");
+        const shapedPdfName = fontName !== "helvetica" ? shapeIndicText(pdfName) : pdfName;
+        doc.text(`Source Document: ${shapedPdfName}`, marginX, y);
+        y += 30;
+
+        questions.forEach((m, idx) => {
+          const qText = m.question;
+          const optTexts = m.options;
+          const ansText = m.correctAnswer;
+          const expText = m.explanation || "";
+
+          const questionLines = wrapAndShape(qText, contentWidth);
+          const optALines = wrapAndShape(`A. ${optTexts[0]}`, contentWidth);
+          const optBLines = wrapAndShape(`B. ${optTexts[1]}`, contentWidth);
+          const optCLines = wrapAndShape(`C. ${optTexts[2]}`, contentWidth);
+          const optDLines = wrapAndShape(`D. ${optTexts[3]}`, contentWidth);
+
+          const ansIndex = optTexts.indexOf(ansText);
+          const ansLetter = ansIndex !== -1 ? String.fromCharCode(65 + ansIndex) : "A";
+          const answerLines = wrapAndShape(`${ansLetter}. ${ansText}`, contentWidth);
+          const explanationLines = expText ? wrapAndShape(expText, contentWidth) : [];
+
+          let blockHeight = 0;
+          blockHeight += 15;
+          blockHeight += 28.8 + 10;
+          blockHeight += questionLines.length * 28.8 + 10;
+          blockHeight += optALines.length * 25.6 + 10;
+          blockHeight += optBLines.length * 25.6 + 10;
+          blockHeight += optCLines.length * 25.6 + 10;
+          blockHeight += optDLines.length * 25.6;
+          blockHeight += 10;
+          blockHeight += 25.6 + 10;
+          blockHeight += answerLines.length * 25.6;
+
+          if (expText) {
+            blockHeight += 10;
+            blockHeight += 24.0 + 10;
+            blockHeight += explanationLines.length * 24.0;
+          }
+          blockHeight += 20;
+
+          if (y + blockHeight > pageHeight - marginY) {
+            doc.addPage();
+            if (base64Font && fontFileName && fontName) {
+              doc.setFont(fontName, "normal");
+            }
+            y = marginY + 15;
+          }
+
+          doc.setDrawColor(220);
+          doc.setLineDashPattern([2, 2], 0);
+          doc.line(marginX, y, pageWidth - marginX, y);
+          y += 15;
+
+          doc.setFontSize(18);
+          setSafeFont("bold");
+          drawShapedText(`${idx + 1}`, marginX, y);
+          y += 28.8 + 10;
+
+          setSafeFont("bold");
+          questionLines.forEach((line) => {
+            drawShapedText(line, marginX, y);
+            y += 28.8;
+          });
+          y += 10;
+
+          doc.setFontSize(16);
+          setSafeFont("normal");
+          const drawOptionGroup = (lines: string[], addGap: boolean) => {
+            lines.forEach((line) => {
+              drawShapedText(line, marginX, y);
+              y += 25.6;
+            });
+            if (addGap) y += 10;
+          };
+
+          drawOptionGroup(optALines, true);
+          drawOptionGroup(optBLines, true);
+          drawOptionGroup(optCLines, true);
+          drawOptionGroup(optDLines, false);
+          y += 10;
+
+          doc.setFontSize(16);
+          setSafeFont("bold");
+          drawShapedText("Answer:", marginX, y);
+          y += 25.6 + 10;
+
+          answerLines.forEach((line) => {
+            drawShapedText(line, marginX, y);
+            y += 25.6;
+          });
+
+          if (expText) {
+            y += 10;
+            doc.setFontSize(15);
+            setSafeFont("bolditalic");
+            drawShapedText("Explanation:", marginX, y);
+            y += 24.0 + 10;
+
+            setSafeFont("italic");
+            explanationLines.forEach((line) => {
+              drawShapedText(line, marginX, y);
+              y += 24.0;
+            });
+          }
+          y += 20;
+        });
+
+        const cleanName = pdfName.replace(".pdf", "").replace(/\s+/g, "_");
+        doc.save(`${cleanName}_MCQs.pdf`);
+        updateStats((prev) => ({ ...prev, downloadHistoryCount: prev.downloadHistoryCount + 1 }));
+        logActivity("download", `Downloaded PDF quiz from "${pdfName}"`);
+        toast.success("PDF document downloaded successfully!");
+      } catch (err) {
+        console.error("PDF generation failed:", err);
+        toast.error("PDF generation failed.");
+      }
+    };
+
+    if (fontUrl) {
+      const toastId = toast.loading(`Downloading Unicode font (${fontName}) to render PDF...`);
+      fetch(fontUrl)
+        .then((res) => {
+          if (!res.ok) throw new Error("Font fetch failed");
+          return res.arrayBuffer();
+        })
+        .then((arrayBuffer) => {
+          let text = "";
+          const bytes = new Uint8Array(arrayBuffer);
+          const len = bytes.byteLength;
+          for (let i = 0; i < len; i++) {
+            text += String.fromCharCode(bytes[i]);
+          }
+          const base64 = window.btoa(text);
+          toast.dismiss(toastId);
+          generateAndSave(base64);
+        })
+        .catch((err) => {
+          toast.dismiss(toastId);
+          toast.error("Failed to load Unicode font. Generating default PDF.");
+          generateAndSave();
+        });
+    } else {
+      generateAndSave();
+    }
+  };
+
+  const handleDownloadWord = async (pdfName: string, questions: MCQ[]) => {
+    const doc = new Document({
+      sections: [
+        {
+          children: [
+            new Paragraph({
+              children: [
+                new TextRun({
+                  text: `Extracted ${questions.length} Questions`,
+                  bold: true,
+                  size: 32,
+                }),
+              ],
+              spacing: { after: 200 },
+            }),
+            ...questions.flatMap((m, idx) => [
+              new Paragraph({
+                text: "------------------------------------------------",
+                spacing: { before: 100, after: 100 },
+              }),
+              new Paragraph({
+                children: [
+                  new TextRun({
+                    text: `Q${idx + 1}`,
+                    bold: true,
+                  }),
+                ],
+              }),
+              new Paragraph({
+                text: m.question,
+                spacing: { after: 120 },
+              }),
+              ...m.options.map(
+                (opt, oi) =>
+                  new Paragraph({
+                    text: `${String.fromCharCode(65 + oi)}. ${opt}`,
+                    spacing: { after: 60 },
+                  }),
+              ),
+              new Paragraph({
+                children: [
+                  new TextRun({
+                    text: "Answer:",
+                    bold: true,
+                  }),
+                ],
+                spacing: { before: 100 },
+              }),
+              new Paragraph({
+                text: `${String.fromCharCode(65 + m.options.indexOf(m.correctAnswer))}. ${m.correctAnswer}`,
+                spacing: { after: 150 },
+              }),
+            ]),
+          ],
+        },
+      ],
+    });
+
+    const blob = await Packer.toBlob(doc);
+    saveAs(blob, `${pdfName.replace(".pdf", "")}_quiz.docx`);
+    updateStats((prev) => ({ ...prev, downloadHistoryCount: prev.downloadHistoryCount + 1 }));
+    logActivity("download", `Downloaded DOCX quiz from "${pdfName}"`);
+    toast.success("Word document (.docx) download started.");
+  };
+
+  // Central File processing handler
+  const handleGlobalFile = async (file: File) => {
+    if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
+      toast.error("Invalid file. Please upload a PDF file.");
+      return;
+    }
+    if (file.size > 100 * 1024 * 1024) {
+      toast.error("File is too large. Max supported size is 100MB.");
+      return;
+    }
+
+    setGlobalUploading(true);
+    setGlobalUploadProgress(10);
+    setGlobalUploadStage("Checking local cache...");
+
+    try {
+      const cacheKey = `pdf_cache_${file.name}_${file.size}_${file.lastModified}`;
+      const cached = await PDFCache.get(cacheKey);
+      if (cached) {
+        toast.success("Loaded document text from local cache!");
+        setGlobalUploadProgress(100);
+        setGlobalUploadStage("Ready!");
+        setTimeout(() => {
+          setPdf(cached);
+          setCurrentFile(file);
+          setGlobalUploading(false);
+          setActiveTab("generate");
+          setStage("configuring");
+        }, 300);
+        return;
+      }
+
+      setGlobalUploadProgress(30);
+      setGlobalUploadStage("Reading PDF structure...");
+      const { sampleText, pagesCount, isScanned } = await extractPdfSample(file);
+
+      setGlobalUploadStage("Detecting language...");
+      setGlobalUploadProgress(70);
+      let isMultilingual = false;
+      let primaryLanguage = "English";
+      let languages: string[] = ["English"];
+      let hasLegacyTamil = false;
+      let fontEncoding = "None";
+      let cleanSample = sampleText;
+
+      try {
+        const detectRes = await fetch("/api/detect-language", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: sampleText.slice(0, 3000) }),
+        });
+        if (detectRes.ok) {
+          const data = await detectRes.json();
+          isMultilingual = !!data.isMultilingual;
+          primaryLanguage = data.primaryLanguage || "English";
+          languages = data.languages || ["English"];
+          hasLegacyTamil = !!data.hasLegacyTamil;
+          fontEncoding = data.fontEncoding || "None";
+        }
+      } catch (err) {
+        console.error("Language detection failed", err);
+      }
+
+      if (hasLegacyTamil) {
+        setGlobalUploadStage(`Converting Tamil sample...`);
+        setGlobalUploadProgress(90);
+        try {
+          const convertRes = await fetch("/api/convert-legacy-tamil", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: sampleText }),
+          });
+          if (convertRes.ok) {
+            const data = await convertRes.json();
+            if (data.text) {
+              cleanSample = data.text;
+              hasLegacyTamil = false;
+              fontEncoding = "Unicode";
+            }
+          }
+        } catch (err) {
+          console.error("Tamil font conversion failed:", err);
+        }
+      }
+
+      const meta: PdfMeta = {
+        name: file.name,
+        size: file.size,
+        pages: pagesCount,
+        chars: pagesCount * 1500,
+        text: cleanSample,
+        isScanned,
+        isMultilingual,
+        primaryLanguage,
+        languages,
+        lastModified: file.lastModified,
+      };
+
+      setGlobalUploadProgress(100);
+      setGlobalUploadStage("Complete!");
+      setTimeout(() => {
+        setPdf(meta);
+        setCurrentFile(file);
+        setGlobalUploading(false);
+        setActiveTab("generate");
+        setStage("configuring");
+
+        updateStats((prev) => ({
+          ...prev,
+          uploadedPdfs: prev.uploadedPdfs + 1,
+          totalPages: prev.totalPages + meta.pages,
+        }));
+        logActivity("upload", `Uploaded "${meta.name}" (${meta.pages} pages)`);
+      }, 300);
+    } catch (e) {
+      console.error(e);
+      toast.error("Failed to parse PDF.");
+      setGlobalUploading(false);
+    }
+  };
 
   // Load stats & settings from localStorage
   useEffect(() => {
@@ -322,7 +1099,6 @@ function App() {
     if (savedProvider) setApiProvider(savedProvider as any);
     if (savedModel) setModelName(savedModel);
 
-    // Default dark theme
     const isDark = savedTheme !== "light";
     setDarkMode(isDark);
     if (isDark) {
@@ -366,218 +1142,507 @@ function App() {
     });
   };
 
+
   return (
-    <div className="min-h-screen bg-background text-foreground transition-colors duration-200">
+    <div className="min-h-screen bg-background text-foreground transition-colors duration-200 flex flex-col">
       <Toaster richColors position="top-right" />
 
+      {/* Global Upload File Input (hidden) */}
+      <input
+        ref={globalFileInputRef}
+        type="file"
+        accept="application/pdf,.pdf"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) void handleGlobalFile(file);
+        }}
+      />
+
+      {/* Global Uploading Frosted-Glass Overlay */}
+      {globalUploading && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background/80 backdrop-blur-md p-8">
+          <div className="w-full max-w-md p-8 rounded-2xl border border-border bg-card/60 shadow-2xl text-center space-y-6">
+            <Loader2 className="h-12 w-12 animate-spin text-indigo-500 mx-auto" />
+            <div className="space-y-2">
+              <h3 className="text-xl font-bold tracking-tight">{globalUploadStage}</h3>
+              <p className="text-xs text-muted-foreground">Please wait while we extract content from the PDF</p>
+            </div>
+            <div className="space-y-1">
+              <Progress value={globalUploadProgress} className="h-2 animate-pulse" />
+              <div className="flex justify-between text-[10px] text-muted-foreground">
+                <span>Parsing pages...</span>
+                <span>{globalUploadProgress}%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Action Button (FAB) on Mobile */}
+      <div className="fixed bottom-6 right-6 z-40 md:hidden">
+        <Button
+          onClick={() => globalFileInputRef.current?.click()}
+          className="h-14 w-14 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 shadow-xl flex items-center justify-center text-white hover:scale-105 transition"
+          title="Upload PDF"
+        >
+          <Upload className="h-6 w-6" />
+        </Button>
+      </div>
+
       {/* Header bar */}
-      <header className="sticky top-0 z-40 w-full border-b border-border bg-background/80 backdrop-blur-md">
-        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
-          <button
-            onClick={() => {
-              setStage("upload");
-              setActiveTab("generate");
-            }}
-            className="flex items-center gap-3 text-xl font-bold tracking-tight hover:opacity-90"
-          >
-            <img
-              src="/logo.png"
-              alt="QuizCrack Logo"
-              className="h-10 w-auto rounded-lg object-contain"
-            />
-            <span className="bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500 bg-clip-text text-transparent">
-              QuizCrack
-            </span>
-            <Badge variant="outline" className="border-indigo-500/30 text-indigo-500 text-[10px]">
-              PREMIUM
-            </Badge>
-          </button>
-
-          <nav className="flex items-center gap-1 md:gap-2">
+      <header className="sticky top-0 z-45 w-full border-b border-border bg-background/85 backdrop-blur-md">
+        <div className="flex h-16 items-center justify-between px-6">
+          <div className="flex items-center gap-3">
+            {/* Hamburger button on Mobile */}
             <Button
-              variant={activeTab === "dashboard" ? "secondary" : "ghost"}
-              size="sm"
-              className="gap-2"
-              onClick={() => setActiveTab("dashboard")}
+              variant="ghost"
+              size="icon"
+              className="md:hidden"
+              onClick={() => setMobileMenuOpen(true)}
             >
-              <LayoutDashboard className="h-4 w-4" />
-              <span className="hidden md:inline">Dashboard</span>
+              <Menu className="h-5 w-5" />
             </Button>
-            <Button
-              variant={activeTab === "generate" ? "secondary" : "ghost"}
-              size="sm"
-              className="gap-2"
+
+            <button
               onClick={() => {
+                setStage("upload");
                 setActiveTab("generate");
-                if (stage === "results") setStage("upload");
               }}
+              className="flex items-center gap-2.5 text-lg font-bold tracking-tight hover:opacity-90"
             >
-              <FileText className="h-4 w-4" />
-              <span className="hidden md:inline">Generate</span>
-            </Button>
+              <img
+                src="/logo.png"
+                alt="QuizCrack Logo"
+                className="h-8 w-auto rounded-lg object-contain"
+              />
+              <span className="bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500 bg-clip-text text-transparent">
+                QuizCrack
+              </span>
+              <Badge variant="outline" className="border-indigo-500/30 text-indigo-500 text-[9px] px-1 py-0 h-4">
+                PREMIUM
+              </Badge>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2.5 md:gap-3.5">
+            {/* Desktop Navbar Actions */}
             <Button
-              variant={activeTab === "settings" ? "secondary" : "ghost"}
-              size="sm"
-              className="gap-2"
-              onClick={() => setActiveTab("settings")}
+              onClick={() => globalFileInputRef.current?.click()}
+              className="hidden md:flex bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-semibold shadow-md hover:scale-[1.02] active:scale-[0.98] transition gap-1.5 h-9"
             >
-              <SettingsIcon className="h-4 w-4" />
-              <span className="hidden md:inline">Settings</span>
+              <PlusCircle className="h-4 w-4" />
+              <span>Upload PDF</span>
             </Button>
 
-            <div className="mx-2 h-4 w-px bg-border" />
+            {/* Profile/Auth Button (Navbar Shortcuts) */}
+            <Button
+              variant={activeTab === "profile" ? "secondary" : "ghost"}
+              size="sm"
+              className="gap-2 h-9 border border-border/30"
+              onClick={() => setActiveTab("profile")}
+            >
+              <User className="h-4 w-4 text-indigo-500" />
+              <span className="hidden sm:inline font-medium">
+                {user ? user.email.split("@")[0] : "Sign In"}
+              </span>
+            </Button>
 
-            <Button variant="ghost" size="icon" onClick={toggleTheme} className="rounded-full">
+            <div className="h-4 w-px bg-border/60" />
+
+            <Button variant="ghost" size="icon" onClick={toggleTheme} className="rounded-full h-8 w-8">
               {darkMode ? (
                 <Sun className="h-4 w-4 text-amber-400" />
               ) : (
                 <Moon className="h-4 w-4 text-indigo-500" />
               )}
             </Button>
-          </nav>
+          </div>
         </div>
       </header>
 
-      {/* Main Container */}
-      <main className="mx-auto max-w-6xl px-6 py-8">
-        {activeTab === "dashboard" && (
-          <Dashboard
-            stats={stats}
-            onResetStats={() => {
-              localStorage.removeItem("quizcrack_stats");
-              setStats(DEFAULT_STATS);
-              toast.success("Dashboard metrics reset.");
-            }}
-          />
+      {/* Main Body Layout */}
+      <div className="flex flex-1 flex-row relative">
+        
+        {/* Left Sidebar (Desktop collapsible) */}
+        <aside
+          className={`hidden md:flex flex-col border-r border-border bg-card/30 backdrop-blur-sm transition-all duration-300 shrink-0 ${
+            sidebarCollapsed ? "w-16" : "w-60"
+          }`}
+        >
+          <div className="p-3 flex flex-col gap-1.5 flex-1">
+            {[
+              { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+              { id: "generate", label: "Generate Quiz", icon: FileText },
+              { id: "recent-activity", label: "Recent Activity", icon: History },
+              { id: "mock-tests", label: "Mock Tests", icon: Trophy },
+              { id: "settings", label: "Settings", icon: SettingsIcon },
+              { id: "profile", label: "Profile / Cloud", icon: User },
+            ].map((t) => {
+              const Icon = t.icon;
+              const isActive = activeTab === t.id;
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => {
+                    setActiveTab(t.id as Tab);
+                    if (t.id === "generate" && stage === "results") setStage("upload");
+                  }}
+                  className={`flex items-center gap-3.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    isActive
+                      ? "bg-indigo-500/10 text-indigo-500 font-semibold"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
+                  }`}
+                  title={t.label}
+                >
+                  <Icon className="h-5 w-5 shrink-0" />
+                  {!sidebarCollapsed && <span className="truncate">{t.label}</span>}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Sidebar Collapse Toggle */}
+          <div className="p-3 border-t border-border/40">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-full justify-center gap-2"
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            >
+              <ChevronRight
+                className={`h-4 w-4 transition-transform duration-300 ${
+                  sidebarCollapsed ? "" : "rotate-180"
+                }`}
+              />
+              {!sidebarCollapsed && <span className="text-xs">Collapse</span>}
+            </Button>
+          </div>
+        </aside>
+
+        {/* Mobile Hamburger Drawer */}
+        {mobileMenuOpen && (
+          <div className="fixed inset-0 z-50 md:hidden bg-background/80 backdrop-blur-sm flex justify-start animate-fade-in">
+            <div className="w-64 h-full bg-card border-r border-border p-6 flex flex-col justify-between shadow-2xl relative">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="absolute top-4 right-4"
+                onClick={() => setMobileMenuOpen(false)}
+              >
+                <X className="h-5 w-5" />
+              </Button>
+
+              <div className="space-y-6">
+                {/* Mobile Menu Logo */}
+                <div className="flex items-center gap-2">
+                  <img src="/logo.png" alt="Logo" className="h-7 w-auto rounded-lg" />
+                  <span className="font-bold text-lg bg-gradient-to-r from-indigo-500 to-purple-500 bg-clip-text text-transparent">
+                    QuizCrack
+                  </span>
+                </div>
+
+                {/* Mobile Nav Links */}
+                <div className="flex flex-col gap-1">
+                  {[
+                    { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+                    { id: "generate", label: "Generate Quiz", icon: FileText },
+                    { id: "recent-activity", label: "Recent Activity", icon: History },
+                    { id: "mock-tests", label: "Mock Tests", icon: Trophy },
+                    { id: "settings", label: "Settings", icon: SettingsIcon },
+                    { id: "profile", label: "Profile / Cloud", icon: User },
+                  ].map((t) => {
+                    const Icon = t.icon;
+                    const isActive = activeTab === t.id;
+                    return (
+                      <button
+                        key={t.id}
+                        onClick={() => {
+                          setActiveTab(t.id as Tab);
+                          setMobileMenuOpen(false);
+                          if (t.id === "generate" && stage === "results") setStage("upload");
+                        }}
+                        className={`flex items-center gap-3.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                          isActive
+                            ? "bg-indigo-500/10 text-indigo-500 font-semibold"
+                            : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
+                        }`}
+                      >
+                        <Icon className="h-5 w-5" />
+                        <span>{t.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Mobile Drawer Bottom Info */}
+              <div className="space-y-4">
+                <Button
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    globalFileInputRef.current?.click();
+                  }}
+                  className="w-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-semibold shadow-md flex items-center justify-center gap-2"
+                >
+                  <PlusCircle className="h-4 w-4" />
+                  <span>Upload PDF</span>
+                </Button>
+                <div className="text-[10px] text-muted-foreground text-center">
+                  QuizCrack v1.0 Premium
+                </div>
+              </div>
+            </div>
+
+            {/* Click outside to close */}
+            <div className="flex-1" onClick={() => setMobileMenuOpen(false)} />
+          </div>
         )}
 
-        {activeTab === "settings" && (
-          <Settings
-            apiKey={apiKey}
-            setApiKey={(k) => {
-              setApiKey(k);
-              localStorage.setItem("quizcrack_apikey", k);
-            }}
-            apiProvider={apiProvider}
-            setApiProvider={(p) => {
-              setApiProvider(p);
-              localStorage.setItem("quizcrack_provider", p);
-            }}
-            modelName={modelName}
-            setModelName={(m) => {
-              setModelName(m);
-              localStorage.setItem("quizcrack_model", m);
-            }}
-          />
-        )}
+        {/* Main Content Area */}
+        <main className="flex-1 px-4 md:px-8 py-8 overflow-y-auto max-w-6xl mx-auto w-full">
+          {activeTab === "dashboard" && (
+            <Dashboard
+              stats={stats}
+              onResetStats={() => {
+                localStorage.removeItem("quizcrack_stats");
+                setStats(DEFAULT_STATS);
+                toast.success("Dashboard metrics reset.");
+              }}
+            />
+          )}
 
-        {activeTab === "generate" && (
-          <>
-            {stage === "upload" && (
-              <UploadStage
-                onLoaded={(meta, file) => {
-                  setPdf(meta);
-                  setCurrentFile(file);
-                  setStage("configuring");
-                  // Update stats
-                  updateStats((prev) => ({
-                    ...prev,
-                    uploadedPdfs: prev.uploadedPdfs + 1,
-                    totalPages: prev.totalPages + meta.pages,
-                  }));
-                  logActivity("upload", `Uploaded "${meta.name}" (${meta.pages} pages)`);
-                }}
-                onExtractionProgress={() => {}}
-              />
-            )}
+          {activeTab === "settings" && (
+            <Settings
+              apiKey={apiKey}
+              setApiKey={(k) => {
+                setApiKey(k);
+                localStorage.setItem("quizcrack_apikey", k);
+              }}
+              apiProvider={apiProvider}
+              setApiProvider={(p) => {
+                setApiProvider(p);
+                localStorage.setItem("quizcrack_provider", p);
+              }}
+              modelName={modelName}
+              setModelName={(m) => {
+                setModelName(m);
+                localStorage.setItem("quizcrack_model", m);
+              }}
+            />
+          )}
 
-            {stage === "configuring" && pdf && (
-              <ConfigureStage
-                pdf={pdf}
-                currentFile={currentFile}
-                apiKey={apiKey}
-                apiProvider={apiProvider}
-                modelName={modelName}
-                onBack={() => setStage("upload")}
-                onStartGenerating={() => setStage("generating")}
-                onFinished={(list, timeSec) => {
-                  setMcqs(list);
-                  setStage("review");
-                  updateStats((prev) => ({
-                    ...prev,
-                    questionsGenerated: prev.questionsGenerated + list.length,
-                    totalGenTimeSec: prev.totalGenTimeSec + timeSec,
-                  }));
-                  logActivity(
-                    "generate",
-                    `Generated ${list.length} questions in ${timeSec}s from "${pdf.name}"`,
-                  );
-                }}
-              />
-            )}
+          {activeTab === "recent-activity" && (
+            <RecentActivity
+              quizzes={recentQuizzes}
+              onView={(quiz) => {
+                setMcqs(quiz.questions);
+                setPdf({
+                  name: quiz.pdf_name,
+                  size: 0,
+                  pages: 0,
+                  chars: 0,
+                  text: "",
+                  isScanned: false,
+                  primaryLanguage: quiz.language,
+                  languages: [quiz.language],
+                });
+                setSelectedLanguage(quiz.language);
+                setStage("review");
+                setActiveTab("generate");
+              }}
+              onDownloadPdf={handleDownloadPdf}
+              onDownloadDocx={handleDownloadWord}
+              onStartTest={(quiz) => {
+                setMcqs(quiz.questions);
+                setPdf({
+                  name: quiz.pdf_name,
+                  size: 0,
+                  pages: 0,
+                  chars: 0,
+                  text: "",
+                  isScanned: false,
+                  primaryLanguage: quiz.language,
+                  languages: [quiz.language],
+                });
+                setSelectedLanguage(quiz.language);
+                setAnswers({});
+                setStage("test");
+                setActiveTab("generate");
+              }}
+              onRename={renameQuiz}
+              onDuplicate={duplicateQuiz}
+              onDelete={deleteQuiz}
+            />
+          )}
 
-            {stage === "review" && (
-              <ReviewStage
-                pdfName={pdf?.name || "Quiz"}
-                mcqs={mcqs}
-                setMcqs={setMcqs}
-                onStartTest={() => {
-                  setAnswers({});
-                  setStage("test");
-                }}
-                onDownload={() => {
-                  updateStats((prev) => ({
-                    ...prev,
-                    downloadHistoryCount: prev.downloadHistoryCount + 1,
-                  }));
-                  logActivity("download", `Downloaded quiz from "${pdf?.name}"`);
-                }}
-              />
-            )}
+          {activeTab === "mock-tests" && (
+            <MockTests
+              quizzes={recentQuizzes}
+              attempts={mockAttempts}
+              onStartTest={(quiz) => {
+                setMcqs(quiz.questions);
+                setPdf({
+                  name: quiz.pdf_name,
+                  size: 0,
+                  pages: 0,
+                  chars: 0,
+                  text: "",
+                  isScanned: false,
+                  primaryLanguage: quiz.language,
+                  languages: [quiz.language],
+                });
+                setSelectedLanguage(quiz.language);
+                setAnswers({});
+                setStage("test");
+                setActiveTab("generate");
+              }}
+              onResetAttempts={() => {
+                setMockAttempts([]);
+                localStorage.removeItem("quizcrack_mock_attempts");
+                if (user && supabaseClient) {
+                  supabaseClient.from("mock_attempts").delete().eq("user_id", user.id).then();
+                }
+                toast.success("Mock test attempts cleared.");
+              }}
+            />
+          )}
 
-            {stage === "test" && (
-              <MockTest
-                mcqs={mcqs}
-                onSubmit={(ans, timeSec) => {
-                  setAnswers(ans);
-                  setTestTime(timeSec);
-                  setStage("results");
-                  updateStats((prev) => ({ ...prev, mockTestsCreated: prev.mockTestsCreated + 1 }));
-                  const score = mcqs.filter((m, idx) => ans[idx] === m.correctAnswer).length;
-                  const pct = Math.round((score / mcqs.length) * 100);
-                  logActivity(
-                    "test",
-                    `Completed mock test: Score ${pct}% (${score}/${mcqs.length})`,
-                  );
-                }}
-                onExit={() => setStage("review")}
-              />
-            )}
-
-            {stage === "results" && (
-              <Results
-                mcqs={mcqs}
-                answers={answers}
-                testTime={testTime}
-                onRetake={() => {
-                  setAnswers({});
-                  setStage("test");
-                }}
-                onEdit={() => setStage("review")}
-                onNew={() => {
-                  setPdf(null);
-                  setMcqs([]);
-                  setAnswers({});
+          {activeTab === "profile" && (
+            <Profile
+              user={user}
+              supabaseClient={supabaseClient}
+              onSignOut={async () => {
+                if (supabaseClient) {
+                  await supabaseClient.auth.signOut();
+                  setUser(null);
+                  toast.success("Logged out successfully.");
+                  setActiveTab("generate");
                   setStage("upload");
-                }}
-              />
-            )}
-          </>
-        )}
-      </main>
+                }
+              }}
+              onSaveSupabaseConfig={(url, key) => {
+                localStorage.setItem("quizcrack_supabase_url", url);
+                localStorage.setItem("quizcrack_supabase_key", key);
+                toast.success("Supabase credentials saved locally. Reloading page...");
+                setTimeout(() => window.location.reload(), 1000);
+              }}
+            />
+          )}
+
+          {activeTab === "generate" && (
+            <>
+              {stage === "upload" && (
+                <UploadStage
+                  onLoaded={(meta, file) => {
+                    setPdf(meta);
+                    setCurrentFile(file);
+                    setStage("configuring");
+                    updateStats((prev) => ({
+                      ...prev,
+                      uploadedPdfs: prev.uploadedPdfs + 1,
+                      totalPages: prev.totalPages + meta.pages,
+                    }));
+                    logActivity("upload", `Uploaded "${meta.name}" (${meta.pages} pages)`);
+                  }}
+                  onSelectFile={handleGlobalFile}
+                />
+              )}
+
+              {stage === "configuring" && pdf && (
+                <ConfigureStage
+                  pdf={pdf}
+                  currentFile={currentFile}
+                  apiKey={apiKey}
+                  apiProvider={apiProvider}
+                  modelName={modelName}
+                  onBack={() => setStage("upload")}
+                  onStartGenerating={() => setStage("generating")}
+                  selectedLanguage={selectedLanguage}
+                  setSelectedLanguage={setSelectedLanguage}
+                  onFinished={(list, timeSec) => {
+                    setMcqs(list);
+                    setStage("review");
+                    updateStats((prev) => ({
+                      ...prev,
+                      questionsGenerated: prev.questionsGenerated + list.length,
+                      totalGenTimeSec: prev.totalGenTimeSec + timeSec,
+                    }));
+                    logActivity(
+                      "generate",
+                      `Generated ${list.length} questions in ${timeSec}s from "${pdf.name}"`,
+                    );
+                    saveGeneratedQuiz(pdf.name, list, selectedLanguage || pdf.primaryLanguage || "English");
+                  }}
+                />
+
+              )}
+
+              {stage === "review" && (
+                <ReviewStage
+                  pdfName={pdf?.name || "Quiz"}
+                  mcqs={mcqs}
+                  setMcqs={setMcqs}
+                  onStartTest={() => {
+                    setAnswers({});
+                    setStage("test");
+                  }}
+                  onDownload={() => {
+                    updateStats((prev) => ({
+                      ...prev,
+                      downloadHistoryCount: prev.downloadHistoryCount + 1,
+                    }));
+                    logActivity("download", `Downloaded quiz from "${pdf?.name}"`);
+                  }}
+                />
+              )}
+
+              {stage === "test" && (
+                <MockTest
+                  mcqs={mcqs}
+                  onSubmit={(ans, timeSec) => {
+                    setAnswers(ans);
+                    setTestTime(timeSec);
+                    setStage("results");
+                    updateStats((prev) => ({ ...prev, mockTestsCreated: prev.mockTestsCreated + 1 }));
+                    const score = mcqs.filter((m, idx) => ans[idx] === m.correctAnswer).length;
+                    const pct = Math.round((score / mcqs.length) * 100);
+                    logActivity(
+                      "test",
+                      `Completed mock test: Score ${pct}% (${score}/${mcqs.length})`,
+                    );
+                    saveMockAttempt(pdf?.name || "Quiz", mcqs.length, score, timeSec);
+                  }}
+                  onExit={() => setStage("review")}
+                />
+              )}
+
+              {stage === "results" && (
+                <Results
+                  mcqs={mcqs}
+                  answers={answers}
+                  testTime={testTime}
+                  onRetake={() => {
+                    setAnswers({});
+                    setStage("test");
+                  }}
+                  onEdit={() => setStage("review")}
+                  onNew={() => {
+                    setPdf(null);
+                    setMcqs([]);
+                    setAnswers({});
+                    setStage("upload");
+                  }}
+                />
+              )}
+            </>
+          )}
+        </main>
+      </div>
     </div>
   );
 }
+
 
 // ==========================================
 // 📈 DASHBOARD COMPONENT
@@ -872,10 +1937,11 @@ function Settings({
 // ==========================================
 type UploadProps = {
   onLoaded: (meta: PdfMeta, file: File) => void;
-  onExtractionProgress: (pct: number, stageName: string) => void;
+  onExtractionProgress?: (pct: number, stageName: string) => void;
+  onSelectFile?: (file: File) => void;
 };
 
-function UploadStage({ onLoaded }: UploadProps) {
+function UploadStage({ onLoaded, onSelectFile }: UploadProps) {
   const [dragging, setDragging] = useState(false);
   const [progress, setProgress] = useState(0);
   const [stageName, setStageName] = useState("");
@@ -884,6 +1950,11 @@ function UploadStage({ onLoaded }: UploadProps) {
 
   const handleFile = useCallback(
     async (file: File) => {
+      if (onSelectFile) {
+        onSelectFile(file);
+        return;
+      }
+
       if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
         toast.error("Invalid file. Please upload a PDF file.");
         return;
@@ -1096,6 +2167,8 @@ type ConfigureProps = {
   onBack: () => void;
   onStartGenerating: () => void;
   onFinished: (mcqs: MCQ[], timeSec: number) => void;
+  selectedLanguage: string;
+  setSelectedLanguage: (lang: string) => void;
 };
 
 type ChecklistStep = {
@@ -1113,7 +2186,10 @@ function ConfigureStage({
   onBack,
   onStartGenerating,
   onFinished,
+  selectedLanguage,
+  setSelectedLanguage,
 }: ConfigureProps) {
+
   const [count, setCount] = useState<number>(20);
   const [difficulty, setDifficulty] = useState<"Easy" | "Medium" | "Hard" | "Mixed">("Mixed");
   const [busy, setBusy] = useState(false);
@@ -1144,7 +2220,6 @@ function ConfigureStage({
     languages: pdf.languages ?? ["English"],
   });
 
-  const [selectedLanguage, setSelectedLanguage] = useState<string>("");
 
   useEffect(() => {
     // Skip if primaryLanguage is already known
@@ -1722,11 +2797,13 @@ function ConfigureStage({
                           <SelectContent>
                             <SelectItem value="English">English</SelectItem>
                             <SelectItem value="Tamil">Tamil (தமிழ்)</SelectItem>
+                            <SelectItem value="Tanglish">Tanglish (Tamil in Latin)</SelectItem>
                             <SelectItem value="Hindi">Hindi (हिन्दी)</SelectItem>
                             <SelectItem value="Telugu">Telugu (తెలుగు)</SelectItem>
                             <SelectItem value="Kannada">Kannada (ಕನ್ನಡ)</SelectItem>
                             <SelectItem value="Malayalam">Malayalam (മലയാളം)</SelectItem>
                           </SelectContent>
+
                         </Select>
                       </div>
                     </div>
@@ -1765,6 +2842,9 @@ function ConfigureStage({
                           {detectedLang.primaryLanguage !== "Tamil" && (
                             <SelectItem value="Tamil">Tamil (தமிழ்)</SelectItem>
                           )}
+                          {detectedLang.primaryLanguage !== "Tanglish" && (
+                            <SelectItem value="Tanglish">Tanglish (Tamil in Latin)</SelectItem>
+                          )}
                           {detectedLang.primaryLanguage !== "Hindi" && (
                             <SelectItem value="Hindi">Hindi (हिन्दी)</SelectItem>
                           )}
@@ -1778,6 +2858,7 @@ function ConfigureStage({
                             <SelectItem value="Malayalam">Malayalam (മലയാളം)</SelectItem>
                           )}
                         </SelectContent>
+
                       </Select>
                     </div>
                   </div>
@@ -2876,11 +3957,12 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
                                       className="font-mono text-sm h-8"
                                     />
                                     <Button
-                                      size="xs"
+                                      size="sm"
                                       variant={m.correctAnswer === opt ? "default" : "outline"}
                                       onClick={() => updateQuestion(i, { correctAnswer: opt })}
                                       className="h-8 text-xs shrink-0"
                                     >
+
                                       {m.correctAnswer === opt ? "Correct" : "Mark Correct"}
                                     </Button>
                                   </div>
@@ -3464,3 +4546,545 @@ function Results({ mcqs, answers, testTime, onRetake, onEdit, onNew }: ResultsPr
     </div>
   );
 }
+
+// ==========================================
+// 🕒 RECENT ACTIVITY COMPONENT
+// ==========================================
+type RecentActivityProps = {
+  quizzes: SavedQuiz[];
+  onView: (q: SavedQuiz) => void;
+  onDownloadPdf: (name: string, mcqs: MCQ[]) => void;
+  onDownloadDocx: (name: string, mcqs: MCQ[]) => void;
+  onStartTest: (q: SavedQuiz) => void;
+  onRename: (id: string, name: string) => void;
+  onDuplicate: (q: SavedQuiz) => void;
+  onDelete: (id: string) => void;
+};
+
+function RecentActivity({
+  quizzes,
+  onView,
+  onDownloadPdf,
+  onDownloadDocx,
+  onStartTest,
+  onRename,
+  onDuplicate,
+  onDelete,
+}: RecentActivityProps) {
+  const [search, setSearch] = useState("");
+  const [langFilter, setLangFilter] = useState("All");
+
+  const filtered = useMemo(() => {
+    return quizzes
+      .filter((q) => {
+        const matchSearch = q.pdf_name.toLowerCase().includes(search.toLowerCase());
+        const matchLang = langFilter === "All" || q.language === langFilter;
+        return matchSearch && matchLang;
+      })
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }, [quizzes, search, langFilter]);
+
+  const languages = useMemo(() => {
+    const set = new Set(quizzes.map((q) => q.language));
+    return ["All", ...Array.from(set)];
+  }, [quizzes]);
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      <div>
+        <h1 className="text-3xl font-extrabold tracking-tight">Recent Activity</h1>
+        <p className="text-muted-foreground mt-1">
+          Review, download, or test your knowledge on previously generated quizzes.
+        </p>
+      </div>
+
+      {/* Filters Bar */}
+      <div className="flex flex-col sm:flex-row gap-3 bg-card/40 backdrop-blur-sm border border-border p-4 rounded-xl">
+        <div className="flex-1 relative">
+          <Input
+            placeholder="Search quizzes by source PDF..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9 h-10 bg-background/50 text-sm"
+          />
+          <span className="absolute left-3 top-3 text-muted-foreground">🔍</span>
+        </div>
+
+        <Select value={langFilter} onValueChange={setLangFilter}>
+          <SelectTrigger className="w-full sm:w-48 h-10 bg-background/50 text-sm">
+            <SelectValue placeholder="Filter by Language" />
+          </SelectTrigger>
+          <SelectContent>
+            {languages.map((l) => (
+              <SelectItem key={l} value={l}>
+                {l === "All" ? "All Languages" : l}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* Quizzes List/Grid */}
+      {filtered.length === 0 ? (
+        <Card className="p-12 text-center bg-card/30 border border-border rounded-2xl flex flex-col items-center justify-center">
+          <History className="h-10 w-10 text-muted-foreground/60 mb-4" />
+          <h3 className="text-lg font-bold tracking-tight">No quizzes found</h3>
+          <p className="text-sm text-muted-foreground mt-1 max-w-sm">
+            Try adjusting your filters, or upload a new PDF to generate a quiz.
+          </p>
+        </Card>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2">
+          {filtered.map((quiz) => (
+            <Card
+              key={quiz.id}
+              className="p-5 bg-card/50 backdrop-blur-sm border-border hover:border-indigo-500/30 hover:shadow-md transition flex flex-col justify-between"
+            >
+              <div className="space-y-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex gap-2.5 items-center min-w-0">
+                    <FileText className="h-5 w-5 text-indigo-500 shrink-0" />
+                    <h3 className="font-bold tracking-tight truncate text-foreground text-sm md:text-base" title={quiz.pdf_name}>
+                      {quiz.pdf_name}
+                    </h3>
+                  </div>
+                  <Badge variant="secondary" className="bg-indigo-500/10 text-indigo-400 border-indigo-500/20 text-[10px] uppercase font-bold shrink-0">
+                    {quiz.language}
+                  </Badge>
+                </div>
+
+                <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
+                  <div>
+                    Questions: <span className="font-semibold text-foreground">{quiz.num_questions}</span>
+                  </div>
+                  <div>
+                    Generated: <span className="font-semibold text-foreground">{new Date(quiz.created_at).toLocaleDateString()} {new Date(quiz.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="mt-5 pt-4 border-t border-border/30 flex flex-wrap gap-2 justify-end">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onView(quiz)}
+                  className="gap-1.5 text-xs h-8"
+                  title="View Questions"
+                >
+                  <Eye className="h-3.5 w-3.5" /> View
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onStartTest(quiz)}
+                  className="gap-1.5 text-xs h-8 border-emerald-500/20 text-emerald-500 hover:bg-emerald-500/10"
+                  title="Start Mock Test"
+                >
+                  <Play className="h-3.5 w-3.5" /> Test
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onDownloadPdf(quiz.pdf_name, quiz.questions)}
+                  className="gap-1.5 text-xs h-8"
+                  title="Download PDF"
+                >
+                  <Download className="h-3.5 w-3.5" /> PDF
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onDownloadDocx(quiz.pdf_name, quiz.questions)}
+                  className="gap-1.5 text-xs h-8"
+                  title="Download Word (DOCX)"
+                >
+                  <Download className="h-3.5 w-3.5" /> DOCX
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const newName = prompt("Enter new name for the quiz:", quiz.pdf_name);
+                    if (newName && newName.trim()) {
+                      onRename(quiz.id, newName.trim());
+                    }
+                  }}
+                  className="gap-1.5 text-xs h-8 text-indigo-400 hover:text-indigo-500"
+                  title="Rename"
+                >
+                  <Edit3 className="h-3.5 w-3.5" /> Rename
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onDuplicate(quiz)}
+                  className="gap-1.5 text-xs h-8"
+                  title="Duplicate"
+                >
+                  <Copy className="h-3.5 w-3.5" /> Duplicate
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    if (confirm("Are you sure you want to delete this quiz?")) {
+                      onDelete(quiz.id);
+                    }
+                  }}
+                  className="gap-1.5 text-xs h-8 border-destructive/20 text-destructive hover:bg-destructive/10"
+                  title="Delete"
+                >
+                  <Trash2 className="h-3.5 w-3.5" /> Delete
+                </Button>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ==========================================
+// 🏆 MOCK TESTS COMPONENT
+// ==========================================
+type MockTestsProps = {
+  quizzes: SavedQuiz[];
+  attempts: MockTestAttempt[];
+  onStartTest: (q: SavedQuiz) => void;
+  onResetAttempts: () => void;
+};
+
+function MockTests({
+  quizzes,
+  attempts,
+  onStartTest,
+  onResetAttempts,
+}: MockTestsProps) {
+  const avgScore = useMemo(() => {
+    if (attempts.length === 0) return 0;
+    return Math.round(attempts.reduce((acc, curr) => acc + curr.score, 0) / attempts.length);
+  }, [attempts]);
+
+  const formatTime = (totalSec: number) => {
+    const mm = String(Math.floor(totalSec / 60)).padStart(2, "0");
+    const ss = String(totalSec % 60).padStart(2, "0");
+    return `${mm}:${ss}`;
+  };
+
+  return (
+    <div className="space-y-8 animate-fade-in">
+      <div>
+        <h1 className="text-3xl font-extrabold tracking-tight">Mock Tests</h1>
+        <p className="text-muted-foreground mt-1">
+          Take practice tests, track your performance, and improve your exam scores.
+        </p>
+      </div>
+
+      {/* Performance Summary Cards */}
+      <div className="grid gap-6 sm:grid-cols-3">
+        <Card className="p-6 bg-card/50 backdrop-blur-sm border-border flex flex-col justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-muted-foreground uppercase">Average Score</h3>
+            <p className="text-4xl font-extrabold mt-2 text-indigo-500">{avgScore}%</p>
+          </div>
+          <p className="text-xs text-muted-foreground mt-4">Target passing score: 70%</p>
+        </Card>
+        <Card className="p-6 bg-card/50 backdrop-blur-sm border-border flex flex-col justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-muted-foreground uppercase">Tests Completed</h3>
+            <p className="text-4xl font-extrabold mt-2 text-emerald-500">{attempts.length}</p>
+          </div>
+          <p className="text-xs text-muted-foreground mt-4">Consistency builds memory</p>
+        </Card>
+        <Card className="p-6 bg-card/50 backdrop-blur-sm border-border flex flex-col justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-muted-foreground uppercase">Quick Start</h3>
+            <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
+              Launch a timed test instantly using one of your saved quizzes from the selector panel.
+            </p>
+          </div>
+        </Card>
+      </div>
+
+      <div className="grid gap-6 md:grid-cols-[1fr_350px]">
+        {/* Mock Test History */}
+        <Card className="p-6 bg-card/50 backdrop-blur-sm border-border">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-bold tracking-tight">Test Attempt History</h3>
+            {attempts.length > 0 && (
+              <Button variant="ghost" size="sm" onClick={onResetAttempts} className="text-xs text-destructive">
+                Clear History
+              </Button>
+            )}
+          </div>
+
+          <div className="max-h-96 overflow-y-auto pr-2 space-y-3.5 scrollbar-thin">
+            {attempts.length === 0 ? (
+              <div className="text-center py-12 text-sm text-muted-foreground flex flex-col items-center">
+                <Trophy className="h-10 w-10 text-muted-foreground/40 mb-3" />
+                <p>No attempts recorded yet.</p>
+                <p className="text-xs mt-1">Start a mock test from the right panel or Recent Activity!</p>
+              </div>
+            ) : (
+              attempts.map((a) => (
+                <div key={a.id} className="flex items-start justify-between border-b border-border/30 pb-3 last:border-0 last:pb-0">
+                  <div className="space-y-1 min-w-0">
+                    <h4 className="font-semibold text-sm truncate pr-2">{a.pdf_name}</h4>
+                    <p className="text-xs text-muted-foreground">
+                      Score: <span className={`font-bold ${a.score >= 80 ? 'text-emerald-500' : a.score >= 50 ? 'text-amber-500' : 'text-destructive'}`}>{a.score}%</span> ({a.correct_count}/{a.total_questions})
+                      {" • "}
+                      Time: {formatTime(a.time_seconds)}
+                    </p>
+                  </div>
+                  <span className="text-[10px] text-muted-foreground whitespace-nowrap pt-1">
+                    {new Date(a.created_at).toLocaleDateString()}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        </Card>
+
+        {/* Start Mock Test Selection */}
+        <Card className="p-6 bg-card/50 backdrop-blur-sm border-border h-fit space-y-4">
+          <h3 className="text-lg font-bold tracking-tight">Select Quiz to Test</h3>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            Choose a generated quiz from your database and start a timed mock exam.
+          </p>
+
+          <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+            {quizzes.length === 0 ? (
+              <p className="text-xs text-center py-6 text-muted-foreground italic border border-dashed border-border rounded-xl">
+                No quizzes available yet. Please generate a quiz first!
+              </p>
+            ) : (
+              quizzes.map((q) => (
+                <div key={q.id} className="flex items-center justify-between p-3 rounded-xl border border-border/60 bg-background/30 hover:bg-muted/10 transition">
+                  <div className="min-w-0 pr-2">
+                    <p className="font-semibold text-xs truncate">{q.pdf_name}</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">{q.num_questions} questions • {q.language}</p>
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={() => onStartTest(q)}
+                    className="h-8 bg-indigo-600 hover:bg-indigo-700 text-xs shadow shrink-0"
+                  >
+                    Start
+                  </Button>
+                </div>
+              ))
+            )}
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+// ==========================================
+// 👤 PROFILE / CLOUD CONTROL COMPONENT
+// ==========================================
+type ProfileProps = {
+  user: any;
+  supabaseClient: any;
+  onSignOut: () => void;
+  onSaveSupabaseConfig: (url: string, key: string) => void;
+};
+
+function Profile({
+  user,
+  supabaseClient,
+  onSignOut,
+  onSaveSupabaseConfig,
+}: ProfileProps) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const config = getSupabaseConfig();
+  const [dbUrl, setDbUrl] = useState(config.url);
+  const [dbKey, setDbKey] = useState(config.key);
+
+  const handleAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!supabaseClient) {
+      toast.error("Supabase client is not initialized. Save project URL & Key first.");
+      return;
+    }
+    if (!email || !password) {
+      toast.error("Please fill in all fields.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      if (isSignUp) {
+        const { error } = await supabaseClient.auth.signUp({ email, password });
+        if (error) throw error;
+        toast.success("Account created successfully! Check your inbox for confirmation.");
+      } else {
+        const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+        toast.success("Signed in successfully!");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Auth error occurred.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="max-w-xl mx-auto space-y-8 animate-fade-in">
+      {user ? (
+        <Card className="p-8 bg-card/60 backdrop-blur-sm border-border space-y-6">
+          <div className="text-center space-y-2">
+            <div className="mx-auto h-16 w-16 rounded-full bg-indigo-500/10 text-indigo-500 flex items-center justify-center border border-indigo-500/20 shadow-inner">
+              <User className="h-7 w-7" />
+            </div>
+            <h2 className="text-2xl font-extrabold tracking-tight">Account Profile</h2>
+            <p className="text-sm text-muted-foreground">{user.email}</p>
+          </div>
+
+          <div className="space-y-4 pt-4 border-t border-border/30 text-sm">
+            <div className="flex justify-between py-2 border-b border-border/20">
+              <span className="text-muted-foreground font-medium">User ID</span>
+              <span className="font-mono text-xs text-foreground truncate max-w-[200px]" title={user.id}>{user.id}</span>
+            </div>
+            <div className="flex justify-between py-2 border-b border-border/20">
+              <span className="text-muted-foreground font-medium">Created Date</span>
+              <span className="font-semibold text-foreground">
+                {new Date(user.created_at).toLocaleDateString()}
+              </span>
+            </div>
+            <div className="flex justify-between py-2">
+              <span className="text-muted-foreground font-medium">Database Sync</span>
+              <Badge className="bg-emerald-500">Active (Supabase)</Badge>
+            </div>
+          </div>
+
+          <Button onClick={onSignOut} variant="destructive" className="w-full flex items-center justify-center gap-2 h-10">
+            <LogOut className="h-4 w-4" /> Sign Out
+          </Button>
+        </Card>
+      ) : (
+        <Card className="p-8 bg-card/60 backdrop-blur-sm border-border space-y-6">
+          <div className="text-center space-y-2">
+            <h2 className="text-2xl font-extrabold tracking-tight">
+              {isSignUp ? "Create a Cloud Account" : "Access Cloud Storage"}
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              {isSignUp
+                ? "Sign up to sync your quizzes permanently."
+                : "Sign in to access your quizzes from any device."}
+            </p>
+          </div>
+
+          {supabaseClient ? (
+            <form onSubmit={handleAuth} className="space-y-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="email">Email Address</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder="name@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  className="h-10"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="password">Password</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  className="h-10"
+                />
+              </div>
+
+              <Button type="submit" disabled={loading} className="w-full bg-indigo-600 hover:bg-indigo-700 h-10 font-semibold shadow-md">
+                {loading ? <Loader2 className="h-4 w-4 animate-spin mx-auto" /> : isSignUp ? "Sign Up" : "Sign In"}
+              </Button>
+
+              <div className="text-center pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsSignUp(!isSignUp)}
+                  className="text-xs text-indigo-400 hover:underline"
+                >
+                  {isSignUp ? "Already have an account? Sign In" : "Don't have an account? Sign Up"}
+                </button>
+              </div>
+            </form>
+          ) : (
+            <div className="p-4 rounded-xl border border-amber-500/20 bg-amber-500/5 text-xs text-amber-500 leading-relaxed text-center">
+              Supabase credentials are not detected. Fill in the Supabase Project Configuration below to enable cloud features.
+            </div>
+          )}
+        </Card>
+      )}
+
+      {/* Supabase Configuration Panel */}
+      <Card className="p-8 bg-card/60 backdrop-blur-sm border-border space-y-5">
+        <div>
+          <h3 className="text-lg font-bold tracking-tight">Supabase Project Settings</h3>
+          <p className="text-xs text-muted-foreground mt-1">
+            Configure your Supabase database endpoints below to enable secure user authentication.
+          </p>
+        </div>
+
+        <div className="space-y-4 text-sm">
+          <div className="space-y-1.5">
+            <Label htmlFor="dbUrl">Supabase URL</Label>
+            <Input
+              id="dbUrl"
+              placeholder="https://yourproject.supabase.co"
+              value={dbUrl}
+              onChange={(e) => setDbUrl(e.target.value)}
+              className="h-10"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="dbKey">Supabase Anon/Public Key</Label>
+            <Input
+              id="dbKey"
+              type="password"
+              placeholder="eyJhbGciOi..."
+              value={dbKey}
+              onChange={(e) => setDbKey(e.target.value)}
+              className="h-10"
+            />
+          </div>
+
+          <Button
+            onClick={() => {
+              if (dbUrl && dbKey) {
+                onSaveSupabaseConfig(dbUrl.trim(), dbKey.trim());
+              } else {
+                toast.error("Please provide both URL and Key.");
+              }
+            }}
+            className="w-full bg-slate-800 hover:bg-slate-700 text-white h-10 font-semibold"
+          >
+            Save Credentials
+          </Button>
+
+          <p className="text-[10px] text-muted-foreground text-center leading-relaxed">
+            Note: Environment variables <code className="bg-muted px-1 py-0.5 rounded text-foreground">VITE_SUPABASE_URL</code> and <code className="bg-muted px-1 py-0.5 rounded text-foreground">VITE_SUPABASE_ANON_KEY</code> can also be used.
+          </p>
+        </div>
+      </Card>
+    </div>
+  );
+}
+

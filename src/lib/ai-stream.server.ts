@@ -49,11 +49,14 @@ export async function* generateMCQStream(config: StreamConfig): AsyncGenerator<M
       : `All questions must be ${difficulty} difficulty.`;
 
   const languageInstruction =
-    selectedLanguage && selectedLanguage !== "mixed"
-      ? `You MUST output all questions, options, correct answers, and explanations in the "${selectedLanguage}" language.`
-      : selectedLanguage === "mixed"
-        ? `You MUST output all questions, options, correct answers, and explanations in the original mixed-language format of the study material.`
-        : `You MUST detect the primary language of the provided study material and output the generated questions, options, correct answers, and explanations in the EXACT same language as the study material. For example, if the material is in Tamil, generate questions in Tamil. Never translate the content unless the user explicitly requests translation.`;
+    selectedLanguage && selectedLanguage === "Tanglish"
+      ? `You MUST generate all questions, options, correct answers, and explanations in Tanglish (Tamil language written phonetically using standard English/Latin letters). Rules for Tanglish: Do NOT use Tamil Unicode characters (e.g. தமிழ்). Translate Tamil vocabulary and sentence structure into Latin letters phonetically (e.g., "India oda capital enna?" or "Ulagathin miga uyarndha sigaram edhu?"). Distractors and explanations must also be in readable Tanglish. Maintain proper readability and natural Tanglish sentences.`
+      : selectedLanguage && selectedLanguage !== "mixed"
+        ? `You MUST output all questions, options, correct answers, and explanations in the "${selectedLanguage}" language.`
+        : selectedLanguage === "mixed"
+          ? `You MUST output all questions, options, correct answers, and explanations in the original mixed-language format of the study material.`
+          : `You MUST detect the primary language of the provided study material and output the generated questions, options, correct answers, and explanations in the EXACT same language as the study material. For example, if the material is in Tamil, generate questions in Tamil. Never translate the content unless the user explicitly requests translation.`;
+
 
   const systemPrompt = `You are an expert exam question writer. Read the provided study material carefully and produce high-quality multiple choice questions.
 
