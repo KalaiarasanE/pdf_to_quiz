@@ -146,3 +146,132 @@
     color: var(--color-foreground);
   }
 }
+
+/* 🖨️ QuizCrack Print Layout Configuration */
+@media print {
+  /* Hide all interactive screen elements */
+  header,
+  nav,
+  aside,
+  button,
+  footer,
+  .print-hidden,
+  .no-print,
+  #root > div > header,
+  #root > div > main > div > div:first-of-type,
+  .bg-card {
+    display: none !important;
+  }
+
+  /* Reset print body styles */
+  html,
+  body,
+  #root {
+    background: white !important;
+    background-color: white !important;
+    color: black !important;
+    font-family: "Noto Sans Tamil", "Inter", "Roboto", sans-serif !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+  }
+
+  /* Show only the printable container */
+  .print-only {
+    display: block !important;
+    position: relative !important;
+    width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* Setup A4 Page Margins: Top/Bottom 20mm, Left/Right 18mm */
+  @page {
+    size: A4 portrait;
+    margin: 20mm 18mm 20mm 18mm;
+  }
+
+  /* Questions Block formatting */
+  .print-question-block {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    margin-bottom: 20px !important; /* Question Gap */
+    text-align: left !important;
+    display: flex !important;
+    flex-direction: column !important;
+    border-bottom: 1px dashed #cccccc !important;
+    padding-bottom: 15px !important;
+  }
+
+  .print-question-number {
+    font-size: 18px !important;
+    font-weight: 600 !important;
+    line-height: 1.6 !important;
+    margin-bottom: 10px !important; /* Paragraph Gap */
+    color: black !important;
+    text-align: left !important;
+  }
+
+  .print-question-text {
+    font-size: 18px !important;
+    font-weight: 600 !important;
+    line-height: 1.6 !important;
+    margin-bottom: 10px !important; /* Paragraph Gap */
+    color: black !important;
+    text-align: left !important;
+  }
+
+  .print-option {
+    font-size: 16px !important;
+    font-weight: 400 !important;
+    line-height: 1.6 !important;
+    margin-bottom: 10px !important; /* Paragraph Gap */
+    color: black !important;
+    text-align: left !important;
+  }
+
+  .print-answer-label {
+    font-size: 16px !important;
+    font-weight: 700 !important;
+    line-height: 1.6 !important;
+    margin-bottom: 10px !important; /* Paragraph Gap */
+    color: black !important;
+    text-align: left !important;
+    text-transform: none !important;
+  }
+
+  .print-answer-text {
+    font-size: 16px !important;
+    font-weight: 700 !important;
+    line-height: 1.6 !important;
+    margin-bottom: 10px !important; /* Paragraph Gap */
+    color: black !important;
+    text-align: left !important;
+  }
+
+  .print-explanation-label {
+    font-size: 15px !important;
+    font-weight: 700 !important;
+    line-height: 1.6 !important;
+    margin-bottom: 10px !important; /* Paragraph Gap */
+    color: black !important;
+    text-align: left !important;
+  }
+
+  .print-explanation-text {
+    font-size: 15px !important;
+    font-weight: 400 !important;
+    line-height: 1.6 !important;
+    margin-bottom: 10px !important;
+    color: black !important;
+    text-align: left !important;
+  }
+}
+
+/* Hide print container on screen */
+@media screen {
+  .print-only {
+    display: none !important;
+  }
+}
