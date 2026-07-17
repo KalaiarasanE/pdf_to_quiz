@@ -26,7 +26,7 @@ import {
   Plus,
   HelpCircle,
   Sun,
-  Moon
+  Moon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -97,12 +97,12 @@ const DEFAULT_STATS: DashboardStats = {
   totalGenTimeSec: 0,
   mockTestsCreated: 0,
   downloadHistoryCount: 0,
-  recentActivity: []
+  recentActivity: [],
 };
 
 // PDF IndexedDB Caching utility
 class PDFCache {
-  private static dbName = "QuizForgeDB";
+  private static dbName = "QuizCrackDB";
   private static storeName = "PDFCacheStore";
 
   private static getDB(): Promise<IDBDatabase> {
@@ -171,7 +171,7 @@ function shouldSkipPage(text: string, pageNum: number, totalPages: number): bool
     "bibliography",
     "appendix",
     "about the author",
-    "index"
+    "index",
   ];
 
   if (pageNum <= 2) {
@@ -181,7 +181,10 @@ function shouldSkipPage(text: string, pageNum: number, totalPages: number): bool
     }
   }
 
-  if (clean.includes("table of contents") || (clean.includes("contents") && clean.includes("page"))) {
+  if (
+    clean.includes("table of contents") ||
+    (clean.includes("contents") && clean.includes("page"))
+  ) {
     return true;
   }
 
@@ -223,7 +226,9 @@ async function runOcrOnPage(doc: any, pageNum: number): Promise<string> {
 }
 
 // Rapid sample extraction (first 2 pages) for language & structure detection
-async function extractPdfSample(file: File): Promise<{ sampleText: string; pagesCount: number; isScanned: boolean }> {
+async function extractPdfSample(
+  file: File,
+): Promise<{ sampleText: string; pagesCount: number; isScanned: boolean }> {
   const pdfjs = await import("pdfjs-dist");
   const workerUrl = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")).default;
   pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -253,7 +258,7 @@ async function extractPdfSample(file: File): Promise<{ sampleText: string; pages
 // Fast page text extraction using parallel chunked promises
 async function getPDFPagesTextFast(
   doc: any,
-  onProgress: (current: number, total: number) => void
+  onProgress: (current: number, total: number) => void,
 ): Promise<{ pageNum: number; text: string }[]> {
   const pagesCount = doc.numPages;
   const results: { pageNum: number; text: string }[] = new Array(pagesCount);
@@ -275,7 +280,7 @@ async function getPDFPagesTextFast(
             console.error(`Error reading page ${pageNum}`, e);
             results[p] = { pageNum, text: "" };
           }
-        })()
+        })(),
       );
     }
     await Promise.all(chunkPromises);
@@ -302,19 +307,21 @@ function App() {
 
   // Load stats & settings from localStorage
   useEffect(() => {
-    const savedStats = localStorage.getItem("quizforge_stats");
+    const savedStats = localStorage.getItem("quizcrack_stats");
     if (savedStats) {
-      try { setStats(JSON.parse(savedStats)); } catch (e) {}
+      try {
+        setStats(JSON.parse(savedStats));
+      } catch (e) {}
     }
-    const savedApiKey = localStorage.getItem("quizforge_apikey");
-    const savedProvider = localStorage.getItem("quizforge_provider");
-    const savedModel = localStorage.getItem("quizforge_model");
-    const savedTheme = localStorage.getItem("quizforge_theme");
-    
+    const savedApiKey = localStorage.getItem("quizcrack_apikey");
+    const savedProvider = localStorage.getItem("quizcrack_provider");
+    const savedModel = localStorage.getItem("quizcrack_model");
+    const savedTheme = localStorage.getItem("quizcrack_theme");
+
     if (savedApiKey) setApiKey(savedApiKey);
     if (savedProvider) setApiProvider(savedProvider as any);
     if (savedModel) setModelName(savedModel);
-    
+
     // Default dark theme
     const isDark = savedTheme !== "light";
     setDarkMode(isDark);
@@ -328,7 +335,7 @@ function App() {
   const toggleTheme = () => {
     const nextDark = !darkMode;
     setDarkMode(nextDark);
-    localStorage.setItem("quizforge_theme", nextDark ? "dark" : "light");
+    localStorage.setItem("quizcrack_theme", nextDark ? "dark" : "light");
     if (nextDark) {
       document.documentElement.classList.add("dark");
     } else {
@@ -339,7 +346,7 @@ function App() {
   const updateStats = (updater: (prev: DashboardStats) => DashboardStats) => {
     setStats((prev) => {
       const next = updater(prev);
-      localStorage.setItem("quizforge_stats", JSON.stringify(next));
+      localStorage.setItem("quizcrack_stats", JSON.stringify(next));
       return next;
     });
   };
@@ -362,7 +369,7 @@ function App() {
   return (
     <div className="min-h-screen bg-background text-foreground transition-colors duration-200">
       <Toaster richColors position="top-right" />
-      
+
       {/* Header bar */}
       <header className="sticky top-0 z-40 w-full border-b border-border bg-background/80 backdrop-blur-md">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
@@ -371,17 +378,21 @@ function App() {
               setStage("upload");
               setActiveTab("generate");
             }}
-            className="flex items-center gap-2.5 text-xl font-bold tracking-tight hover:opacity-90"
+            className="flex items-center gap-3 text-xl font-bold tracking-tight hover:opacity-90"
           >
-            <span className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-tr from-primary to-secondary text-primary-foreground shadow-lg shadow-primary/20">
-              <Sparkles className="h-5 w-5 animate-pulse" />
-            </span>
+            <img
+              src="/logo.png"
+              alt="QuizCrack Logo"
+              className="h-10 w-auto rounded-lg object-contain"
+            />
             <span className="bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500 bg-clip-text text-transparent">
-              QuizForge
+              QuizCrack
             </span>
-            <Badge variant="outline" className="border-indigo-500/30 text-indigo-500 text-[10px]">PREMIUM</Badge>
+            <Badge variant="outline" className="border-indigo-500/30 text-indigo-500 text-[10px]">
+              PREMIUM
+            </Badge>
           </button>
-          
+
           <nav className="flex items-center gap-1 md:gap-2">
             <Button
               variant={activeTab === "dashboard" ? "secondary" : "ghost"}
@@ -413,11 +424,15 @@ function App() {
               <SettingsIcon className="h-4 w-4" />
               <span className="hidden md:inline">Settings</span>
             </Button>
-            
+
             <div className="mx-2 h-4 w-px bg-border" />
-            
+
             <Button variant="ghost" size="icon" onClick={toggleTheme} className="rounded-full">
-              {darkMode ? <Sun className="h-4 w-4 text-amber-400" /> : <Moon className="h-4 w-4 text-indigo-500" />}
+              {darkMode ? (
+                <Sun className="h-4 w-4 text-amber-400" />
+              ) : (
+                <Moon className="h-4 w-4 text-indigo-500" />
+              )}
             </Button>
           </nav>
         </div>
@@ -426,11 +441,14 @@ function App() {
       {/* Main Container */}
       <main className="mx-auto max-w-6xl px-6 py-8">
         {activeTab === "dashboard" && (
-          <Dashboard stats={stats} onResetStats={() => {
-            localStorage.removeItem("quizforge_stats");
-            setStats(DEFAULT_STATS);
-            toast.success("Dashboard metrics reset.");
-          }} />
+          <Dashboard
+            stats={stats}
+            onResetStats={() => {
+              localStorage.removeItem("quizcrack_stats");
+              setStats(DEFAULT_STATS);
+              toast.success("Dashboard metrics reset.");
+            }}
+          />
         )}
 
         {activeTab === "settings" && (
@@ -438,17 +456,17 @@ function App() {
             apiKey={apiKey}
             setApiKey={(k) => {
               setApiKey(k);
-              localStorage.setItem("quizforge_apikey", k);
+              localStorage.setItem("quizcrack_apikey", k);
             }}
             apiProvider={apiProvider}
             setApiProvider={(p) => {
               setApiProvider(p);
-              localStorage.setItem("quizforge_provider", p);
+              localStorage.setItem("quizcrack_provider", p);
             }}
             modelName={modelName}
             setModelName={(m) => {
               setModelName(m);
-              localStorage.setItem("quizforge_model", m);
+              localStorage.setItem("quizcrack_model", m);
             }}
           />
         )}
@@ -472,7 +490,7 @@ function App() {
                 onExtractionProgress={() => {}}
               />
             )}
-            
+
             {stage === "configuring" && pdf && (
               <ConfigureStage
                 pdf={pdf}
@@ -492,12 +510,12 @@ function App() {
                   }));
                   logActivity(
                     "generate",
-                    `Generated ${list.length} questions in ${timeSec}s from "${pdf.name}"`
+                    `Generated ${list.length} questions in ${timeSec}s from "${pdf.name}"`,
                   );
                 }}
               />
             )}
-            
+
             {stage === "review" && (
               <ReviewStage
                 pdfName={pdf?.name || "Quiz"}
@@ -508,12 +526,15 @@ function App() {
                   setStage("test");
                 }}
                 onDownload={() => {
-                  updateStats((prev) => ({ ...prev, downloadHistoryCount: prev.downloadHistoryCount + 1 }));
+                  updateStats((prev) => ({
+                    ...prev,
+                    downloadHistoryCount: prev.downloadHistoryCount + 1,
+                  }));
                   logActivity("download", `Downloaded quiz from "${pdf?.name}"`);
                 }}
               />
             )}
-            
+
             {stage === "test" && (
               <MockTest
                 mcqs={mcqs}
@@ -524,12 +545,15 @@ function App() {
                   updateStats((prev) => ({ ...prev, mockTestsCreated: prev.mockTestsCreated + 1 }));
                   const score = mcqs.filter((m, idx) => ans[idx] === m.correctAnswer).length;
                   const pct = Math.round((score / mcqs.length) * 100);
-                  logActivity("test", `Completed mock test: Score ${pct}% (${score}/${mcqs.length})`);
+                  logActivity(
+                    "test",
+                    `Completed mock test: Score ${pct}% (${score}/${mcqs.length})`,
+                  );
                 }}
                 onExit={() => setStage("review")}
               />
             )}
-            
+
             {stage === "results" && (
               <Results
                 mcqs={mcqs}
@@ -559,16 +583,19 @@ function App() {
 // 📈 DASHBOARD COMPONENT
 // ==========================================
 function Dashboard({ stats, onResetStats }: { stats: DashboardStats; onResetStats: () => void }) {
-  const avgGenTime = stats.questionsGenerated > 0 
-    ? (stats.totalGenTimeSec / stats.questionsGenerated).toFixed(2)
-    : "0";
+  const avgGenTime =
+    stats.questionsGenerated > 0
+      ? (stats.totalGenTimeSec / stats.questionsGenerated).toFixed(2)
+      : "0";
 
   return (
     <div className="space-y-8 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-extrabold tracking-tight">Analytics Dashboard</h1>
-          <p className="text-muted-foreground mt-1">Track your quiz generation history, PDF metrics, and performance.</p>
+          <p className="text-muted-foreground mt-1">
+            Track your quiz generation history, PDF metrics, and performance.
+          </p>
         </div>
         <Button variant="outline" size="sm" onClick={onResetStats}>
           Clear History
@@ -578,12 +605,39 @@ function Dashboard({ stats, onResetStats }: { stats: DashboardStats; onResetStat
       {/* Stats Cards */}
       <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
         {[
-          { label: "Uploaded PDFs", value: stats.uploadedPdfs, sub: "Total documents processed", icon: BookOpen, color: "text-indigo-500 bg-indigo-500/10" },
-          { label: "Total Pages Extracted", value: stats.totalPages, sub: "Pages read by parser/OCR", icon: FileText, color: "text-cyan-500 bg-cyan-500/10" },
-          { label: "Questions Generated", value: stats.questionsGenerated, sub: "Exam-quality MCQs created", icon: Sparkles, color: "text-purple-500 bg-purple-500/10" },
-          { label: "Avg Speed (Sec/Q)", value: avgGenTime, sub: "Seconds per generated question", icon: Loader2, color: "text-emerald-500 bg-emerald-500/10" },
+          {
+            label: "Uploaded PDFs",
+            value: stats.uploadedPdfs,
+            sub: "Total documents processed",
+            icon: BookOpen,
+            color: "text-indigo-500 bg-indigo-500/10",
+          },
+          {
+            label: "Total Pages Extracted",
+            value: stats.totalPages,
+            sub: "Pages read by parser/OCR",
+            icon: FileText,
+            color: "text-cyan-500 bg-cyan-500/10",
+          },
+          {
+            label: "Questions Generated",
+            value: stats.questionsGenerated,
+            sub: "Exam-quality MCQs created",
+            icon: Sparkles,
+            color: "text-purple-500 bg-purple-500/10",
+          },
+          {
+            label: "Avg Speed (Sec/Q)",
+            value: avgGenTime,
+            sub: "Seconds per generated question",
+            icon: Loader2,
+            color: "text-emerald-500 bg-emerald-500/10",
+          },
         ].map((c, i) => (
-          <Card key={i} className="p-6 relative overflow-hidden bg-card/60 backdrop-blur-sm border-border hover:shadow-md transition">
+          <Card
+            key={i}
+            className="p-6 relative overflow-hidden bg-card/60 backdrop-blur-sm border-border hover:shadow-md transition"
+          >
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">{c.label}</p>
@@ -625,16 +679,27 @@ function Dashboard({ stats, onResetStats }: { stats: DashboardStats; onResetStat
           <h3 className="text-lg font-bold tracking-tight mb-4">Recent Activity</h3>
           <div className="max-h-64 overflow-y-auto pr-2 space-y-3 scrollbar-thin">
             {stats.recentActivity.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-8">No recent activity. Start generating quizzes!</p>
+              <p className="text-sm text-muted-foreground text-center py-8">
+                No recent activity. Start generating quizzes!
+              </p>
             ) : (
               stats.recentActivity.map((a) => (
-                <div key={a.id} className="flex items-start justify-between text-sm py-1 border-b border-border/30 last:border-0 pb-2">
+                <div
+                  key={a.id}
+                  className="flex items-start justify-between text-sm py-1 border-b border-border/30 last:border-0 pb-2"
+                >
                   <div className="flex gap-2.5 items-center">
-                    <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${
-                      a.type === "upload" ? "bg-indigo-500" :
-                      a.type === "generate" ? "bg-purple-500" :
-                      a.type === "test" ? "bg-emerald-500" : "bg-cyan-500"
-                    }`} />
+                    <span
+                      className={`h-2.5 w-2.5 rounded-full shrink-0 ${
+                        a.type === "upload"
+                          ? "bg-indigo-500"
+                          : a.type === "generate"
+                            ? "bg-purple-500"
+                            : a.type === "test"
+                              ? "bg-emerald-500"
+                              : "bg-cyan-500"
+                      }`}
+                    />
                     <p className="font-medium text-foreground">{a.detail}</p>
                   </div>
                   <span className="text-xs text-muted-foreground">{a.time}</span>
@@ -660,7 +725,14 @@ type SettingsProps = {
   setModelName: (m: string) => void;
 };
 
-function Settings({ apiKey, setApiKey, apiProvider, setApiProvider, modelName, setModelName }: SettingsProps) {
+function Settings({
+  apiKey,
+  setApiKey,
+  apiProvider,
+  setApiProvider,
+  modelName,
+  setModelName,
+}: SettingsProps) {
   // Sync model choices based on provider
   useEffect(() => {
     if (apiProvider === "gemini" && !modelName.startsWith("gemini")) {
@@ -668,13 +740,16 @@ function Settings({ apiKey, setApiKey, apiProvider, setApiProvider, modelName, s
     } else if (apiProvider === "openai" && !modelName.startsWith("gpt")) {
       setModelName("gpt-4o-mini");
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiProvider]);
 
   return (
     <Card className="max-w-xl mx-auto p-8 space-y-6 bg-card/60 backdrop-blur-sm border-border animate-fade-in">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">API Settings</h1>
-        <p className="text-sm text-muted-foreground mt-1">Configure your AI model credentials. Keys are saved locally in your browser.</p>
+        <p className="text-sm text-muted-foreground mt-1">
+          Configure your AI model credentials. Keys are saved locally in your browser.
+        </p>
       </div>
 
       <div className="space-y-4">
@@ -716,11 +791,21 @@ function Settings({ apiKey, setApiKey, apiProvider, setApiProvider, modelName, s
             <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
               Required to generate quizzes locally. Get a key from the{" "}
               {apiProvider === "gemini" ? (
-                <a href="https://aistudio.google.com/" target="_blank" rel="noreferrer" className="text-indigo-400 underline">
+                <a
+                  href="https://aistudio.google.com/"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-indigo-400 underline"
+                >
                   Google AI Studio
                 </a>
               ) : (
-                <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer" className="text-indigo-400 underline">
+                <a
+                  href="https://platform.openai.com/api-keys"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-indigo-400 underline"
+                >
                   OpenAI Platform
                 </a>
               )}
@@ -731,7 +816,8 @@ function Settings({ apiKey, setApiKey, apiProvider, setApiProvider, modelName, s
 
         {apiProvider === "lovable" && (
           <div className="p-4 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-xs text-indigo-400 leading-relaxed">
-            Uses the pre-configured server keys provided by the platform. You do not need to provide a custom key, but generation will depend on server credit availability.
+            Uses the pre-configured server keys provided by the platform. You do not need to provide
+            a custom key, but generation will depend on server credit availability.
           </div>
         )}
 
@@ -743,7 +829,9 @@ function Settings({ apiKey, setApiKey, apiProvider, setApiProvider, modelName, s
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite (Ultra Fast & Low Latency)</SelectItem>
+                <SelectItem value="gemini-3.1-flash-lite">
+                  Gemini 3.1 Flash Lite (Ultra Fast & Low Latency)
+                </SelectItem>
                 <SelectItem value="gemini-3.5-flash">Gemini 3.5 Flash (Fast & Accurate)</SelectItem>
                 <SelectItem value="gemini-2.5-flash">Gemini 2.5 Flash</SelectItem>
                 <SelectItem value="gemini-2.5-pro">Gemini 2.5 Pro (Extremely Detailed)</SelectItem>
@@ -766,9 +854,12 @@ function Settings({ apiKey, setApiKey, apiProvider, setApiProvider, modelName, s
       </div>
 
       <div className="pt-2">
-        <Button className="w-full" onClick={() => {
-          toast.success("Settings saved locally!");
-        }}>
+        <Button
+          className="w-full"
+          onClick={() => {
+            toast.success("Settings saved locally!");
+          }}
+        >
           Save Configuration
         </Button>
       </div>
@@ -801,7 +892,7 @@ function UploadStage({ onLoaded }: UploadProps) {
         toast.error("File is too large. Max supported size is 100MB.");
         return;
       }
-      
+
       setBusy(true);
       setProgress(10);
       setStageName("Checking local cache...");
@@ -908,7 +999,8 @@ function UploadStage({ onLoaded }: UploadProps) {
           Create Quizzes from PDFs in Seconds
         </h1>
         <p className="mx-auto max-w-2xl text-muted-foreground">
-          Drop any study guide, research paper, textbook, or scanned PDF. Our AI parses pages in parallel, runs OCR when needed, and generates custom exam questions.
+          Drop any study guide, research paper, textbook, or scanned PDF. Our AI parses pages in
+          parallel, runs OCR when needed, and generates custom exam questions.
         </p>
       </div>
 
@@ -925,7 +1017,9 @@ function UploadStage({ onLoaded }: UploadProps) {
           if (file) void handleFile(file);
         }}
         className={`border-2 border-dashed p-14 text-center cursor-pointer transition-all duration-300 relative overflow-hidden bg-card/40 backdrop-blur-sm ${
-          dragging ? "border-primary bg-indigo-500/10 scale-[0.99]" : "border-border hover:border-indigo-500/50 hover:bg-card/60"
+          dragging
+            ? "border-primary bg-indigo-500/10 scale-[0.99]"
+            : "border-border hover:border-indigo-500/50 hover:bg-card/60"
         }`}
         onClick={() => !busy && inputRef.current?.click()}
       >
@@ -953,7 +1047,9 @@ function UploadStage({ onLoaded }: UploadProps) {
             <h3 className="text-lg font-bold tracking-tight">{stageName}</h3>
             <div className="w-full max-w-md mt-4">
               <Progress value={progress} className="h-2" />
-              <p className="text-xs text-muted-foreground text-right mt-1.5">{progress}% completed</p>
+              <p className="text-xs text-muted-foreground text-right mt-1.5">
+                {progress}% completed
+              </p>
             </div>
           </div>
         )}
@@ -961,9 +1057,21 @@ function UploadStage({ onLoaded }: UploadProps) {
 
       <div className="grid gap-6 md:grid-cols-3">
         {[
-          { icon: BookOpen, title: "Parallel Extraction", body: "Processes all PDF pages concurrently for maximum processing throughput." },
-          { icon: Sparkles, title: "Tesseract OCR Fallback", body: "Extracts text from scanned pages, notes, and photos using AI-powered image recognition." },
-          { icon: Play, title: "Instant Cached Loads", body: "Re-uploading files instantly retrieves cached extractions from browser memory." },
+          {
+            icon: BookOpen,
+            title: "Parallel Extraction",
+            body: "Processes all PDF pages concurrently for maximum processing throughput.",
+          },
+          {
+            icon: Sparkles,
+            title: "Tesseract OCR Fallback",
+            body: "Extracts text from scanned pages, notes, and photos using AI-powered image recognition.",
+          },
+          {
+            icon: Play,
+            title: "Instant Cached Loads",
+            body: "Re-uploading files instantly retrieves cached extractions from browser memory.",
+          },
         ].map((f, i) => (
           <Card key={i} className="p-6 bg-card/40 backdrop-blur-sm border-border">
             <f.icon className="h-6 w-6 text-indigo-500" />
@@ -1033,7 +1141,7 @@ function ConfigureStage({
   }>({
     isMultilingual: pdf.isMultilingual ?? false,
     primaryLanguage: pdf.primaryLanguage ?? "English",
-    languages: pdf.languages ?? ["English"]
+    languages: pdf.languages ?? ["English"],
   });
 
   const [selectedLanguage, setSelectedLanguage] = useState<string>("");
@@ -1041,7 +1149,7 @@ function ConfigureStage({
   useEffect(() => {
     // Skip if primaryLanguage is already known
     if (pdf.primaryLanguage !== undefined) return;
-    
+
     // Fallback/Initial detection based on sample text in pdf.text
     if (pdf.text && pdf.text.length > 50) {
       fetch("/api/detect-language", {
@@ -1057,14 +1165,14 @@ function ConfigureStage({
           setDetectedLang({
             isMultilingual: !!data.isMultilingual,
             primaryLanguage: data.primaryLanguage || "English",
-            languages: data.languages || ["English"]
+            languages: data.languages || ["English"],
           });
         })
         .catch(() => {
           setDetectedLang({
             isMultilingual: false,
             primaryLanguage: "English",
-            languages: ["English"]
+            languages: ["English"],
           });
         });
     }
@@ -1077,22 +1185,23 @@ function ConfigureStage({
       setSelectedLanguage(detectedLang.primaryLanguage);
     }
   }, [detectedLang]);
-  
+
   // Progress checklists
   const [checklist, setChecklist] = useState<ChecklistStep[]>([
     { id: "load", label: "Uploading PDF content...", status: "idle" },
     { id: "text", label: "Extracting document text...", status: "idle" },
     { id: "understand", label: "Understanding content themes...", status: "idle" },
     { id: "generate", label: "Generating MCQ questions in parallel...", status: "idle" },
-    { id: "complete", label: "Completed", status: "idle" }
+    { id: "complete", label: "Completed", status: "idle" },
   ]);
 
-  const estimated = useMemo(() => Math.max(5, Math.min(100, Math.round(pdf.chars / 450))), [pdf.chars]);
+  const estimated = useMemo(
+    () => Math.max(5, Math.min(100, Math.round(pdf.chars / 450))),
+    [pdf.chars],
+  );
 
   const updateStep = (id: string, status: ChecklistStep["status"]) => {
-    setChecklist((prev) =>
-      prev.map((step) => (step.id === id ? { ...step, status } : step))
-    );
+    setChecklist((prev) => prev.map((step) => (step.id === id ? { ...step, status } : step)));
   };
 
   async function run() {
@@ -1100,10 +1209,10 @@ function ConfigureStage({
     setLiveQuestions([]);
     setLogs([]);
     setGenTime(0);
-    
+
     const startTime = Date.now();
     addLog("Starting MCQ Generation process...");
-    
+
     // Check questions cache first
     const questionsCacheKey = `questions_${pdf.name}_${pdf.size}_${count}_${difficulty}_${modelName}`;
     addLog("Checking questions cache...");
@@ -1113,40 +1222,40 @@ function ConfigureStage({
         addLog("Cache hit! Found generated questions in IndexedDB.");
         toast.success("Loaded generated questions from local cache!");
         setLiveQuestions(cachedQuestions);
-        
+
         updateStep("load", "done");
         updateStep("text", "done");
         updateStep("understand", "done");
         updateStep("generate", "done");
         updateStep("complete", "done");
-        
+
         onFinished(cachedQuestions, 1);
         return;
       }
     } catch (e) {
       addLog(`Cache read error: ${e}`);
     }
-    
+
     onStartGenerating();
     updateStep("load", "running");
     await new Promise((r) => setTimeout(r, 400));
     updateStep("load", "done");
-    
+
     updateStep("text", "running");
-    
+
     const timerInterval = setInterval(() => {
       setGenTime((t) => t + 1);
     }, 1000);
 
     let doc: any = null;
     let allPagesList: { pageNum: number; text: string }[] = [];
-    
+
     try {
       // Check if we have cached text meta first
       const textCacheKey = `pdf_cache_${pdf.name}_${pdf.size}_${pdf.lastModified}`;
       addLog("Checking document text cache...");
       const cachedMeta = await PDFCache.get(textCacheKey);
-      
+
       if (cachedMeta && cachedMeta.pageList && cachedMeta.pageList.length > 0) {
         addLog("Cache hit! Found pre-extracted page text list in IndexedDB.");
         allPagesList = cachedMeta.pageList;
@@ -1156,16 +1265,18 @@ function ConfigureStage({
         if (!currentFile) {
           throw new Error("Missing reference to the uploaded PDF file. Please try re-uploading.");
         }
-        
+
         addLog("Cache miss. Loading PDF document into memory...");
         const pdfjs = await import("pdfjs-dist");
         const workerUrl = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")).default;
         pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
-        
+
         const buf = await currentFile.arrayBuffer();
         doc = await pdfjs.getDocument({ data: buf }).promise;
-        addLog(`PDF loaded. Total pages: ${doc.numPages}. Scanning pages for educational content...`);
-        
+        addLog(
+          `PDF loaded. Total pages: ${doc.numPages}. Scanning pages for educational content...`,
+        );
+
         allPagesList = await getPDFPagesTextFast(doc, (current, total) => {
           setProgress(Math.round((current / total) * 90));
           if (current % 10 === 0 || current === total) {
@@ -1173,83 +1284,96 @@ function ConfigureStage({
           }
         });
       }
-      
+
       const totalPagesCount = allPagesList.length;
       updateStep("text", "done");
       updateStep("understand", "running");
-      
+
       // Heuristic page selection
-      addLog("Analyzing document pages to skip cover pages, copyright page, table of contents, index, and blank pages...");
+      addLog(
+        "Analyzing document pages to skip cover pages, copyright page, table of contents, index, and blank pages...",
+      );
       const activePages: { pageNum: number; text: string; isScanned?: boolean }[] = [];
       const skippedPagesCount: number[] = [];
       let scannedPagesCount = 0;
-      
+
       allPagesList.forEach((p) => {
         const skip = shouldSkipPage(p.text, p.pageNum, totalPagesCount);
         if (skip) {
           skippedPagesCount.push(p.pageNum);
           return;
         }
-        
+
         const isScanned = p.text.trim().length < 50;
         if (isScanned) {
           scannedPagesCount++;
         }
-        
+
         activePages.push({ ...p, isScanned });
       });
-      
-      addLog(`Filtering complete. Active pages: ${activePages.length}/${totalPagesCount} (Skipped ${skippedPagesCount.length} non-content pages).`);
+
+      addLog(
+        `Filtering complete. Active pages: ${activePages.length}/${totalPagesCount} (Skipped ${skippedPagesCount.length} non-content pages).`,
+      );
       if (scannedPagesCount > activePages.length * 0.6) {
-        addLog(`Detected high ratio of scanned/image pages (${scannedPagesCount}). Running in OCR Fallback Mode.`);
+        addLog(
+          `Detected high ratio of scanned/image pages (${scannedPagesCount}). Running in OCR Fallback Mode.`,
+        );
       }
-      
+
       let finalActivePages = activePages;
       if (activePages.length === 0) {
         addLog("Warning: No text content found. Re-enabling all pages to run OCR scan.");
         finalActivePages = allPagesList.map((p) => ({ ...p, isScanned: true }));
       }
-      
+
       // Split into batches
       const batchSize = 15;
-      const batches: { batchIndex: number; pages: { pageNum: number; text: string; isScanned?: boolean }[] }[] = [];
+      const batches: {
+        batchIndex: number;
+        pages: { pageNum: number; text: string; isScanned?: boolean }[];
+      }[] = [];
       for (let i = 0; i < finalActivePages.length; i += batchSize) {
         batches.push({
           batchIndex: Math.floor(i / batchSize),
-          pages: finalActivePages.slice(i, i + batchSize)
+          pages: finalActivePages.slice(i, i + batchSize),
         });
       }
-      
+
       updateStep("understand", "done");
       updateStep("generate", "running");
-      
+
       const totalBatches = batches.length;
-      addLog(`Divided active pages into ${totalBatches} batches. Initializing Parallel Stream Generation Queue...`);
-      
+      addLog(
+        `Divided active pages into ${totalBatches} batches. Initializing Parallel Stream Generation Queue...`,
+      );
+
       const questionsList: MCQ[] = [];
       let activeWorkerCount = 0;
       let nextBatchIndex = 0;
       let isAborted = false;
       let processedPagesCount = 0;
-      
+
       // Track language properties
-      let hasLegacyTamil = pdf.hasLegacyTamil || false;
-      let fontEncoding = pdf.fontEncoding || "None";
-      let primaryLanguage = detectedLang.primaryLanguage;
-      let isMultilingual = detectedLang.isMultilingual;
-      let languages = detectedLang.languages;
-      
+      const hasLegacyTamil = pdf.hasLegacyTamil || false;
+      const fontEncoding = pdf.fontEncoding || "None";
+      const primaryLanguage = detectedLang.primaryLanguage;
+      const isMultilingual = detectedLang.isMultilingual;
+      const languages = detectedLang.languages;
+
       async function runNextBatch() {
         if (isAborted || nextBatchIndex >= totalBatches || questionsList.length >= count) {
           return;
         }
-        
+
         const batchIdx = nextBatchIndex++;
         activeWorkerCount++;
         const batch = batches[batchIdx];
-        
-        addLog(`[Batch ${batchIdx + 1}/${totalBatches}] Processing pages ${batch.pages[0].pageNum}–${batch.pages[batch.pages.length - 1].pageNum}...`);
-        
+
+        addLog(
+          `[Batch ${batchIdx + 1}/${totalBatches}] Processing pages ${batch.pages[0].pageNum}–${batch.pages[batch.pages.length - 1].pageNum}...`,
+        );
+
         try {
           // 1. OCR fallback for pages in this batch
           const batchPagesText: string[] = [];
@@ -1272,25 +1396,28 @@ function ConfigureStage({
               allPagesList[pIdx].text = pText;
             }
           }
-          
+
           let batchText = batchPagesText.join("\n\n");
-          
+
           if (batchText.trim().length < 100) {
             addLog(`[Batch ${batchIdx + 1}] Skip: Batch contains no readable text.`);
             return;
           }
-          
+
           // 2. Language conversion (if Tamil font encoding detected)
           const words = batchText.split(/\s+/);
           let legacyWordCount = 0;
-          const legacyRegex = /([a-zA-Z]+;[a-zA-Z]*)|(thz|Fw;|ghj;|xypia|Kjd;|Kjypy;|xyp|tpah|ghu;)/;
+          const legacyRegex =
+            /([a-zA-Z]+;[a-zA-Z]*)|(thz|Fw;|ghj;|xypia|Kjd;|Kjypy;|xyp|tpah|ghu;)/;
           for (const word of words) {
             if (legacyRegex.test(word)) legacyWordCount++;
           }
           const batchLegacyPct = words.length > 0 ? (legacyWordCount / words.length) * 100 : 0;
-          
+
           if (batchLegacyPct > 5) {
-            addLog(`[Batch ${batchIdx + 1}] Legacy Tamil font encoding detected in batch text. Converting to Unicode...`);
+            addLog(
+              `[Batch ${batchIdx + 1}] Legacy Tamil font encoding detected in batch text. Converting to Unicode...`,
+            );
             try {
               const convertRes = await fetch("/api/convert-legacy-tamil", {
                 method: "POST",
@@ -1301,22 +1428,26 @@ function ConfigureStage({
                 const data = await convertRes.json();
                 if (data.text) {
                   batchText = data.text;
-                  addLog(`[Batch ${batchIdx + 1}] Successfully converted Tamil encoding to Unicode.`);
+                  addLog(
+                    `[Batch ${batchIdx + 1}] Successfully converted Tamil encoding to Unicode.`,
+                  );
                 }
               }
             } catch (err) {
               console.error("Tamil conversion failed for batch", err);
             }
           }
-          
+
           // 3. AI Stream Request
           const questionsPerBatch = Math.min(
             Math.ceil(count / totalBatches),
-            count - questionsList.length
+            count - questionsList.length,
           );
-          
+
           if (questionsPerBatch > 0) {
-            addLog(`[Batch ${batchIdx + 1}] Sending text to AI for ${questionsPerBatch} questions...`);
+            addLog(
+              `[Batch ${batchIdx + 1}] Sending text to AI for ${questionsPerBatch} questions...`,
+            );
             const response = await fetch("/api/generate", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -1330,35 +1461,37 @@ function ConfigureStage({
                 selectedLanguage,
               }),
             });
-            
+
             if (!response.ok) {
               const errJson = await response.json();
               throw new Error(errJson.error || "Internal Server Error during batch generation");
             }
-            
+
             if (response.body) {
               const reader = response.body.getReader();
               const decoder = new TextDecoder();
               let buffer = "";
-              
+
               while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
-                
+
                 buffer += decoder.decode(value, { stream: true });
                 let newlineIdx;
                 while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
                   const line = buffer.slice(0, newlineIdx).trim();
                   buffer = buffer.slice(newlineIdx + 1);
                   if (!line) continue;
-                  
+
                   try {
                     const parsed = JSON.parse(line);
                     if (parsed.error) throw new Error(parsed.error);
                     if (parsed.question) {
                       questionsList.push(parsed);
                       setLiveQuestions([...questionsList]);
-                      addLog(`[Stream] ✅ Q${questionsList.length}: ${parsed.question.slice(0, 50)}...`);
+                      addLog(
+                        `[Stream] ✅ Q${questionsList.length}: ${parsed.question.slice(0, 50)}...`,
+                      );
                     }
                   } catch (err) {
                     // Partial JSON error
@@ -1367,20 +1500,19 @@ function ConfigureStage({
               }
             }
           }
-          
         } catch (err) {
           addLog(`[Batch ${batchIdx + 1} Error] ${err instanceof Error ? err.message : err}`);
         } finally {
           activeWorkerCount--;
           processedPagesCount += batch.pages.length;
-          
+
           // Progress metrics calculations
           const percent = Math.round((processedPagesCount / totalPagesCount) * 100);
           const remaining = totalPagesCount - processedPagesCount;
           const elapsed = Math.round((Date.now() - startTime) / 1000);
           const avgTimePerPage = elapsed / processedPagesCount;
           const estTimeRemaining = Math.round(avgTimePerPage * remaining);
-          
+
           setPipelineProgress({
             percent: Math.min(100, percent),
             currentPage: batch.pages[batch.pages.length - 1].pageNum,
@@ -1388,7 +1520,7 @@ function ConfigureStage({
             remainingPages: remaining,
             estimatedTimeSec: estTimeRemaining > 0 ? estTimeRemaining : 0,
           });
-          
+
           // Abort checking and loop continuation
           if (questionsList.length >= count) {
             if (!isAborted) {
@@ -1400,7 +1532,7 @@ function ConfigureStage({
           }
         }
       }
-      
+
       // Spawn workers in parallel
       const workers = [];
       const concurrency = Math.min(3, totalBatches);
@@ -1408,13 +1540,15 @@ function ConfigureStage({
         workers.push(runNextBatch());
       }
       await Promise.all(workers);
-      
+
       clearInterval(timerInterval);
-      
+
       if (questionsList.length === 0) {
-        throw new Error("No questions were generated by the AI model. Try verifying your API key or document text.");
+        throw new Error(
+          "No questions were generated by the AI model. Try verifying your API key or document text.",
+        );
       }
-      
+
       // Save to IndexedDB caches
       addLog("Saving extracted text and questions to IndexedDB Cache...");
       try {
@@ -1432,7 +1566,7 @@ function ConfigureStage({
           pageList: allPagesList,
           lastModified: pdf.lastModified,
         };
-        
+
         // Save PDF text metadata cache
         await PDFCache.set(textCacheKey, finalPdfMeta);
         // Save PDF questions cache
@@ -1441,16 +1575,15 @@ function ConfigureStage({
       } catch (err) {
         console.warn("Could not write cache to IndexedDB", err);
       }
-      
+
       updateStep("generate", "done");
       updateStep("complete", "done");
       toast.success(`Success! Generated ${questionsList.length} questions.`);
-      
+
       const totalElapsed = Math.round((Date.now() - startTime) / 1000);
       setTimeout(() => {
         onFinished(questionsList, totalElapsed);
       }, 1000);
-      
     } catch (e) {
       clearInterval(timerInterval);
       console.error(e);
@@ -1462,7 +1595,6 @@ function ConfigureStage({
 
   return (
     <div className="grid gap-8 md:grid-cols-3 max-w-5xl mx-auto animate-fade-in">
-      
       <div className="md:col-span-2 space-y-6">
         {!busy ? (
           <Card className="p-8 bg-card/40 backdrop-blur-sm border-border">
@@ -1493,7 +1625,9 @@ function ConfigureStage({
                       min={1}
                       max={120}
                       value={count}
-                      onChange={(e) => setCount(Math.max(1, Math.min(120, Number(e.target.value) || 1)))}
+                      onChange={(e) =>
+                        setCount(Math.max(1, Math.min(120, Number(e.target.value) || 1)))
+                      }
                       className="w-20 h-9"
                     />
                     <span className="text-xs text-muted-foreground ml-1">Custom</span>
@@ -1503,7 +1637,10 @@ function ConfigureStage({
 
               <div>
                 <Label className="mb-2 block text-sm font-semibold">Difficulty Level</Label>
-                <Select value={difficulty} onValueChange={(v) => setDifficulty(v as typeof difficulty)}>
+                <Select
+                  value={difficulty}
+                  onValueChange={(v) => setDifficulty(v as typeof difficulty)}
+                >
                   <SelectTrigger className="w-full md:w-72 bg-background/50">
                     <SelectValue />
                   </SelectTrigger>
@@ -1521,7 +1658,7 @@ function ConfigureStage({
                   <BookOpen className="h-4 w-4 text-indigo-500" />
                   Language & Preservation
                 </Label>
-                
+
                 {detectedLang.isMultilingual ? (
                   <div className="space-y-4 p-4 rounded-xl border border-indigo-500/20 bg-indigo-500/5">
                     <p className="text-xs text-muted-foreground leading-relaxed">
@@ -1531,7 +1668,7 @@ function ConfigureStage({
                       </span>
                       ). Select how you want the questions generated:
                     </p>
-                    
+
                     <div className="grid gap-2">
                       <Button
                         type="button"
@@ -1540,11 +1677,13 @@ function ConfigureStage({
                         onClick={() => setSelectedLanguage("mixed")}
                       >
                         <span className="w-4 h-4 rounded-full border border-indigo-500 mr-2 flex items-center justify-center shrink-0">
-                          {selectedLanguage === "mixed" && <span className="w-2 h-2 rounded-full bg-indigo-500" />}
+                          {selectedLanguage === "mixed" && (
+                            <span className="w-2 h-2 rounded-full bg-indigo-500" />
+                          )}
                         </span>
                         Original mixed-language format
                       </Button>
-                      
+
                       {detectedLang.languages.map((lang) => (
                         <Button
                           key={lang}
@@ -1554,19 +1693,22 @@ function ConfigureStage({
                           onClick={() => setSelectedLanguage(lang)}
                         >
                           <span className="w-4 h-4 rounded-full border border-indigo-500 mr-2 flex items-center justify-center shrink-0">
-                            {selectedLanguage === lang && <span className="w-2 h-2 rounded-full bg-indigo-500" />}
+                            {selectedLanguage === lang && (
+                              <span className="w-2 h-2 rounded-full bg-indigo-500" />
+                            )}
                           </span>
                           Generate questions only in {lang}
                         </Button>
                       ))}
-                      
+
                       <div className="border-t border-border/40 pt-3 mt-1.5">
                         <Label className="text-xs text-muted-foreground mb-1.5 block">
                           Translate all questions into a selected language (optional)
                         </Label>
                         <Select
                           value={
-                            detectedLang.languages.includes(selectedLanguage) || selectedLanguage === "mixed"
+                            detectedLang.languages.includes(selectedLanguage) ||
+                            selectedLanguage === "mixed"
                               ? ""
                               : selectedLanguage
                           }
@@ -1593,11 +1735,14 @@ function ConfigureStage({
                   <div className="space-y-3.5">
                     <div className="flex items-center gap-2 text-sm text-muted-foreground p-3 rounded-lg border border-border/40 bg-muted/20">
                       <span>Detected Document Language:</span>
-                      <Badge variant="secondary" className="bg-indigo-500/10 text-indigo-400 border-indigo-500/20 font-semibold">
+                      <Badge
+                        variant="secondary"
+                        className="bg-indigo-500/10 text-indigo-400 border-indigo-500/20 font-semibold"
+                      >
                         {detectedLang.primaryLanguage}
                       </Badge>
                     </div>
-                    
+
                     <div>
                       <Label className="text-xs text-muted-foreground mb-1.5 block">
                         Translate questions (optional - defaults to detected language)
@@ -1614,12 +1759,24 @@ function ConfigureStage({
                             Original ({detectedLang.primaryLanguage})
                           </SelectItem>
                           {/* Filter out original to avoid duplicates */}
-                          {detectedLang.primaryLanguage !== "English" && <SelectItem value="English">English</SelectItem>}
-                          {detectedLang.primaryLanguage !== "Tamil" && <SelectItem value="Tamil">Tamil (தமிழ்)</SelectItem>}
-                          {detectedLang.primaryLanguage !== "Hindi" && <SelectItem value="Hindi">Hindi (हिन्दी)</SelectItem>}
-                          {detectedLang.primaryLanguage !== "Telugu" && <SelectItem value="Telugu">Telugu (తెలుగు)</SelectItem>}
-                          {detectedLang.primaryLanguage !== "Kannada" && <SelectItem value="Kannada">Kannada (ಕನ್ನಡ)</SelectItem>}
-                          {detectedLang.primaryLanguage !== "Malayalam" && <SelectItem value="Malayalam">Malayalam (മലയാളം)</SelectItem>}
+                          {detectedLang.primaryLanguage !== "English" && (
+                            <SelectItem value="English">English</SelectItem>
+                          )}
+                          {detectedLang.primaryLanguage !== "Tamil" && (
+                            <SelectItem value="Tamil">Tamil (தமிழ்)</SelectItem>
+                          )}
+                          {detectedLang.primaryLanguage !== "Hindi" && (
+                            <SelectItem value="Hindi">Hindi (हिन्दी)</SelectItem>
+                          )}
+                          {detectedLang.primaryLanguage !== "Telugu" && (
+                            <SelectItem value="Telugu">Telugu (తెలుగు)</SelectItem>
+                          )}
+                          {detectedLang.primaryLanguage !== "Kannada" && (
+                            <SelectItem value="Kannada">Kannada (ಕನ್ನಡ)</SelectItem>
+                          )}
+                          {detectedLang.primaryLanguage !== "Malayalam" && (
+                            <SelectItem value="Malayalam">Malayalam (മലയാളം)</SelectItem>
+                          )}
                         </SelectContent>
                       </Select>
                     </div>
@@ -1632,7 +1789,11 @@ function ConfigureStage({
                   <ChevronLeft className="mr-1.5 h-4 w-4" />
                   Back
                 </Button>
-                <Button onClick={run} disabled={busy} className="flex-1 bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 font-semibold shadow-lg shadow-indigo-500/20">
+                <Button
+                  onClick={run}
+                  disabled={busy}
+                  className="flex-1 bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 font-semibold shadow-lg shadow-indigo-500/20"
+                >
                   <Sparkles className="mr-2 h-4 w-4 animate-spin-slow" />
                   Generate {count} MCQs
                 </Button>
@@ -1649,27 +1810,45 @@ function ConfigureStage({
                   Elapsed: {genTime}s
                 </div>
               </div>
-              <p className="text-sm text-muted-foreground mt-1">Reading, parsing, and streaming exam questions from PDF.</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                Reading, parsing, and streaming exam questions from PDF.
+              </p>
             </div>
 
             {/* Progress Metrics Row */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="p-3 bg-indigo-500/5 rounded-xl border border-indigo-500/10 text-center">
-                <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Progress</div>
-                <div className="text-xl font-extrabold mt-1 text-primary">{pipelineProgress.percent}%</div>
+                <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
+                  Progress
+                </div>
+                <div className="text-xl font-extrabold mt-1 text-primary">
+                  {pipelineProgress.percent}%
+                </div>
               </div>
               <div className="p-3 bg-indigo-500/5 rounded-xl border border-indigo-500/10 text-center">
-                <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Current Page</div>
-                <div className="text-xl font-extrabold mt-1 text-primary">{pipelineProgress.currentPage}</div>
+                <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
+                  Current Page
+                </div>
+                <div className="text-xl font-extrabold mt-1 text-primary">
+                  {pipelineProgress.currentPage}
+                </div>
               </div>
               <div className="p-3 bg-indigo-500/5 rounded-xl border border-indigo-500/10 text-center">
-                <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Pages Left</div>
-                <div className="text-xl font-extrabold mt-1 text-primary">{pipelineProgress.remainingPages}</div>
+                <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
+                  Pages Left
+                </div>
+                <div className="text-xl font-extrabold mt-1 text-primary">
+                  {pipelineProgress.remainingPages}
+                </div>
               </div>
               <div className="p-3 bg-indigo-500/5 rounded-xl border border-indigo-500/10 text-center">
-                <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Time Remaining</div>
+                <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
+                  Time Remaining
+                </div>
                 <div className="text-xl font-extrabold mt-1 text-primary text-indigo-400">
-                  {pipelineProgress.estimatedTimeSec > 0 ? `${pipelineProgress.estimatedTimeSec}s` : "Calculating..."}
+                  {pipelineProgress.estimatedTimeSec > 0
+                    ? `${pipelineProgress.estimatedTimeSec}s`
+                    : "Calculating..."}
                 </div>
               </div>
             </div>
@@ -1684,15 +1863,24 @@ function ConfigureStage({
 
                 return (
                   <div key={step.id} className="flex items-center gap-3.5 text-sm">
-                    {isIdle && <div className="h-5 w-5 rounded-full border border-muted bg-muted/40 shrink-0" />}
-                    {isRunning && <Loader2 className="h-5 w-5 animate-spin text-indigo-500 shrink-0" />}
+                    {isIdle && (
+                      <div className="h-5 w-5 rounded-full border border-muted bg-muted/40 shrink-0" />
+                    )}
+                    {isRunning && (
+                      <Loader2 className="h-5 w-5 animate-spin text-indigo-500 shrink-0" />
+                    )}
                     {isDone && <CheckCircle2 className="h-5 w-5 text-emerald-500 shrink-0" />}
                     {isError && <XCircle className="h-5 w-5 text-destructive shrink-0" />}
-                    
-                    <span className={`font-medium ${
-                      isDone ? "text-muted-foreground line-through decoration-muted-foreground/40" : 
-                      isRunning ? "text-foreground font-semibold" : "text-muted-foreground"
-                    }`}>
+
+                    <span
+                      className={`font-medium ${
+                        isDone
+                          ? "text-muted-foreground line-through decoration-muted-foreground/40"
+                          : isRunning
+                            ? "text-foreground font-semibold"
+                            : "text-muted-foreground"
+                      }`}
+                    >
                       {step.label}
                     </span>
                   </div>
@@ -1702,7 +1890,9 @@ function ConfigureStage({
 
             {/* Live Logs Terminal Screen */}
             <div className="space-y-2">
-              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Execution Pipeline Logs</span>
+              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                Execution Pipeline Logs
+              </span>
               <div className="bg-black/50 border border-border/60 rounded-xl p-4 font-mono text-xs text-indigo-300 h-44 overflow-y-auto space-y-1.5 scrollbar-thin">
                 {logs.length === 0 ? (
                   <div className="text-muted-foreground italic">Initializing log stream...</div>
@@ -1720,13 +1910,19 @@ function ConfigureStage({
             <div className="space-y-3.5 border-t border-border/40 pt-6">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-semibold">Live Extracted Count:</span>
-                <Badge className="bg-emerald-500 hover:bg-emerald-600 font-bold">{liveQuestions.length} / {count}</Badge>
+                <Badge className="bg-emerald-500 hover:bg-emerald-600 font-bold">
+                  {liveQuestions.length} / {count}
+                </Badge>
               </div>
 
               {liveQuestions.length > 0 && (
                 <div className="p-4 rounded-xl border border-indigo-500/20 bg-indigo-500/5 text-sm animate-pulse space-y-1">
-                  <span className="text-xs text-indigo-400 font-bold uppercase tracking-wider">Latest Streamed question</span>
-                  <p className="font-bold text-foreground line-clamp-2">{liveQuestions[liveQuestions.length - 1].question}</p>
+                  <span className="text-xs text-indigo-400 font-bold uppercase tracking-wider">
+                    Latest Streamed question
+                  </span>
+                  <p className="font-bold text-foreground line-clamp-2">
+                    {liveQuestions[liveQuestions.length - 1].question}
+                  </p>
                 </div>
               )}
 
@@ -1739,16 +1935,17 @@ function ConfigureStage({
               </div>
             </div>
           </Card>
-        )
-      }
+        )}
       </div>
 
       {/* Info panel */}
       <div className="space-y-6">
         <Card className="p-6 bg-card/40 backdrop-blur-sm border-border h-fit">
-          <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Source Document</h3>
+          <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+            Source Document
+          </h3>
           <p className="mt-2 truncate font-bold text-lg">{pdf.name}</p>
-          
+
           <div className="mt-6 space-y-3.5 text-sm">
             <div className="flex items-center justify-between border-b border-border/30 pb-2">
               <span className="text-muted-foreground">Total pages</span>
@@ -1762,9 +1959,19 @@ function ConfigureStage({
               <span className="text-muted-foreground">Type</span>
               <span className="font-semibold flex items-center gap-1">
                 {pdf.isScanned ? (
-                  <Badge variant="secondary" className="bg-amber-500/10 text-amber-500 border-amber-500/20">Scanned Image</Badge>
+                  <Badge
+                    variant="secondary"
+                    className="bg-amber-500/10 text-amber-500 border-amber-500/20"
+                  >
+                    Scanned Image
+                  </Badge>
                 ) : (
-                  <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-500 border-emerald-500/20">Text-Based</Badge>
+                  <Badge
+                    variant="secondary"
+                    className="bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
+                  >
+                    Text-Based
+                  </Badge>
                 )}
               </span>
             </div>
@@ -1781,7 +1988,9 @@ function ConfigureStage({
             Gemini Flash Speed Mode
           </h4>
           <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
-            By preferring Google Gemini Flash, QuizForge achieves unmatched generation speeds (e.g. 50 questions under 10 seconds) due to highly-parallel streams and low-latency API routes.
+            By preferring Google Gemini Flash, QuizCrack achieves unmatched generation speeds (e.g.
+            50 questions under 10 seconds) due to highly-parallel streams and low-latency API
+            routes.
           </p>
         </Card>
       </div>
@@ -1802,7 +2011,9 @@ type ReviewProps = {
 
 function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: ReviewProps) {
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
-  const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set(mcqs.map((_, i) => i)));
+  const [selectedIndices, setSelectedIndices] = useState<Set<number>>(
+    new Set(mcqs.map((_, i) => i)),
+  );
   const [filterDifficulty, setFilterDifficulty] = useState<string>("All");
   const [filterCategory, setFilterCategory] = useState<string>("All");
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -1810,15 +2021,17 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
   const parentRef = useRef<HTMLDivElement>(null);
 
   const filteredMCQs = useMemo(() => {
-    return mcqs.map((m, i) => ({ m, i })).filter(({ m }) => {
-      const matchDiff = filterDifficulty === "All" || m.difficulty === filterDifficulty;
-      const matchCat = filterCategory === "All" || m.category === filterCategory;
-      const matchSearch =
-        searchQuery.trim() === "" ||
-        m.question.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        m.options.some((o) => o.toLowerCase().includes(searchQuery.toLowerCase()));
-      return matchDiff && matchCat && matchSearch;
-    });
+    return mcqs
+      .map((m, i) => ({ m, i }))
+      .filter(({ m }) => {
+        const matchDiff = filterDifficulty === "All" || m.difficulty === filterDifficulty;
+        const matchCat = filterCategory === "All" || m.category === filterCategory;
+        const matchSearch =
+          searchQuery.trim() === "" ||
+          m.question.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          m.options.some((o) => o.toLowerCase().includes(searchQuery.toLowerCase()));
+        return matchDiff && matchCat && matchSearch;
+      });
   }, [mcqs, filterDifficulty, filterCategory, searchQuery]);
 
   const rowVirtualizer = useVirtualizer({
@@ -1847,7 +2060,7 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
       correctAnswer: "Option A",
       explanation: "Add explanation here.",
       difficulty: "Medium",
-      category: "Concept"
+      category: "Concept",
     };
     setMcqs([newQ, ...mcqs]);
     setEditingIndex(0);
@@ -1958,11 +2171,12 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
                 text: m.question,
                 spacing: { after: 120 },
               }),
-              ...m.options.map((opt, oi) => 
-                new Paragraph({
-                  text: `${String.fromCharCode(65 + oi)}. ${opt}`,
-                  spacing: { after: 60 },
-                })
+              ...m.options.map(
+                (opt, oi) =>
+                  new Paragraph({
+                    text: `${String.fromCharCode(65 + oi)}. ${opt}`,
+                    spacing: { after: 60 },
+                  }),
               ),
               new Paragraph({
                 children: [
@@ -2032,9 +2246,11 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
 
     // Formatting
     sheet.getRow(1).font = { bold: true };
-    
+
     const buffer = await workbook.xlsx.writeBuffer();
-    const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const blob = new Blob([buffer], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
     saveAs(blob, `${pdfName.replace(".pdf", "")}_quiz.xlsx`);
     onDownload();
     toast.success("Excel sheet (.xlsx) download started.");
@@ -2048,23 +2264,23 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
     let shaped = text;
 
     // 1. Tamil shaping
-    shaped = shaped.replace(/([க-ஹ])\u0BC6/g, '\u0BC6$1'); // ெ
-    shaped = shaped.replace(/([க-ஹ])\u0BC7/g, '\u0BC7$1'); // ே
-    shaped = shaped.replace(/([க-ஹ])\u0BC8/g, '\u0BC8$1'); // ை
-    shaped = shaped.replace(/([க-ஹ])\u0BCA/g, '\u0BC6$1\u0BBE'); // ொ -> ெ + consonant + ா
-    shaped = shaped.replace(/([க-ஹ])\u0BCB/g, '\u0BC7$1\u0BBE'); // ோ -> ே + consonant + ா
-    shaped = shaped.replace(/([க-ஹ])\u0BCC/g, '\u0BC6$1\u0BD7'); // ௌ -> ெ + consonant + ள-sign
+    shaped = shaped.replace(/([க-ஹ])\u0BC6/g, "\u0BC6$1"); // ெ
+    shaped = shaped.replace(/([க-ஹ])\u0BC7/g, "\u0BC7$1"); // ே
+    shaped = shaped.replace(/([க-ஹ])\u0BC8/g, "\u0BC8$1"); // ை
+    shaped = shaped.replace(/([க-ஹ])\u0BCA/g, "\u0BC6$1\u0BBE"); // ொ -> ெ + consonant + ா
+    shaped = shaped.replace(/([க-ஹ])\u0BCB/g, "\u0BC7$1\u0BBE"); // ோ -> ே + consonant + ா
+    shaped = shaped.replace(/([க-ஹ])\u0BCC/g, "\u0BC6$1\u0BD7"); // ௌ -> ெ + consonant + ள-sign
 
     // 2. Devanagari (Hindi) shaping
-    shaped = shaped.replace(/([क-ह])\u093F/g, '\u093F$1'); // ि
-    shaped = shaped.replace(/([क-ह]्[क-ह])\u093F/g, '\u093F$1');
+    shaped = shaped.replace(/([क-ह])\u093F/g, "\u093F$1"); // ि
+    shaped = shaped.replace(/([क-ह]्[क-ह])\u093F/g, "\u093F$1");
 
     // 3. Malayalam shaping
-    shaped = shaped.replace(/([ക-ഹ])\u0D46/g, '\u0D46$1'); // െ
-    shaped = shaped.replace(/([ക-ഹ])\u0D47/g, '\u0D47$1'); // േ
-    shaped = shaped.replace(/([ക-ഹ])\u0D48/g, '\u0D48$1'); // ൈ
-    shaped = shaped.replace(/([ക-ഹ])\u0D4A/g, '\u0D46$1\u0D3E'); // ൊ
-    shaped = shaped.replace(/([ക-ഹ])\u0D4B/g, '\u0D47$1\u0D3E'); // ോ
+    shaped = shaped.replace(/([ക-ഹ])\u0D46/g, "\u0D46$1"); // െ
+    shaped = shaped.replace(/([ക-ഹ])\u0D47/g, "\u0D47$1"); // േ
+    shaped = shaped.replace(/([ക-ഹ])\u0D48/g, "\u0D48$1"); // ൈ
+    shaped = shaped.replace(/([ക-ഹ])\u0D4A/g, "\u0D46$1\u0D3E"); // ൊ
+    shaped = shaped.replace(/([ക-ഹ])\u0D4B/g, "\u0D47$1\u0D3E"); // ോ
 
     return shaped;
   };
@@ -2076,36 +2292,45 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
       return;
     }
 
-    const fullQuestionsText = list.map(m => m.question + " " + m.options.join(" ") + " " + m.correctAnswer).join(" ");
-    
+    const fullQuestionsText =
+      pdfName +
+      " " +
+      list.map((m) => m.question + " " + m.options.join(" ") + " " + m.correctAnswer).join(" ");
+
     let fontName = "helvetica";
     let fontUrl = "";
     let fontFileName = "";
-    
+
     if (/[\u0B80-\u0BFF]/.test(fullQuestionsText)) {
       fontName = "NotoSansTamil";
       fontFileName = "NotoSansTamil-Regular.ttf";
-      fontUrl = "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansTamil/NotoSansTamil-Regular.ttf";
+      fontUrl =
+        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansTamil/NotoSansTamil-Regular.ttf";
     } else if (/[\u0900-\u097F]/.test(fullQuestionsText)) {
       fontName = "NotoSansDevanagari";
       fontFileName = "NotoSansDevanagari-Regular.ttf";
-      fontUrl = "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Regular.ttf";
+      fontUrl =
+        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Regular.ttf";
     } else if (/[\u0C00-\u0C7F]/.test(fullQuestionsText)) {
       fontName = "NotoSansTelugu";
       fontFileName = "NotoSansTelugu-Regular.ttf";
-      fontUrl = "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansTelugu/NotoSansTelugu-Regular.ttf";
+      fontUrl =
+        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansTelugu/NotoSansTelugu-Regular.ttf";
     } else if (/[\u0C80-\u0CFF]/.test(fullQuestionsText)) {
       fontName = "NotoSansKannada";
       fontFileName = "NotoSansKannada-Regular.ttf";
-      fontUrl = "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansKannada/NotoSansKannada-Regular.ttf";
+      fontUrl =
+        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansKannada/NotoSansKannada-Regular.ttf";
     } else if (/[\u0D00-\u0D7F]/.test(fullQuestionsText)) {
       fontName = "NotoSansMalayalam";
       fontFileName = "NotoSansMalayalam-Regular.ttf";
-      fontUrl = "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansMalayalam/NotoSansMalayalam-Regular.ttf";
-    } else if (/[^\u0000-\u007F]/.test(fullQuestionsText)) {
+      fontUrl =
+        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansMalayalam/NotoSansMalayalam-Regular.ttf";
+    } else if (Array.from(fullQuestionsText).some((char) => char.charCodeAt(0) > 127)) {
       fontName = "NotoSans";
       fontFileName = "NotoSans-Regular.ttf";
-      fontUrl = "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSans/NotoSans-Regular.ttf";
+      fontUrl =
+        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSans/NotoSans-Regular.ttf";
     }
 
     const generateAndSave = (base64Font?: string) => {
@@ -2114,13 +2339,13 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
           orientation: "p",
           unit: "pt",
           format: "a4",
-          compress: true, // Enable native PDF Flate stream compression for text
+          compress: true,
         });
-        
+
         if (base64Font && fontFileName && fontName) {
           doc.addFileToVFS(fontFileName, base64Font);
           doc.addFont(fontFileName, fontName, "normal");
-          doc.setFont(fontName);
+          doc.setFont(fontName, "normal");
         }
 
         const pageWidth = doc.internal.pageSize.getWidth();
@@ -2128,57 +2353,85 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
         const marginX = 30; // 30pt Left/Right margin
         const marginY = 25; // 25pt Top/Bottom margin
         const contentWidth = pageWidth - marginX * 2;
-        
+
         let y = 30;
 
+        const setSafeFont = (style: "normal" | "bold" | "italic" | "bolditalic") => {
+          if (fontName === "helvetica") {
+            doc.setFont("helvetica", style);
+          } else {
+            doc.setFont(fontName, "normal");
+          }
+        };
+
         // Header
-        if (fontName === "helvetica") {
-          doc.setFont("helvetica", "bold");
-        }
+        setSafeFont("bold");
         doc.setFontSize(18);
         doc.text(`Extracted ${list.length} Questions`, marginX, y);
-        y += 15;
+        y += 18;
+
         doc.setFontSize(10);
-        if (fontName === "helvetica") {
-          doc.setFont("helvetica", "normal");
-        }
-        
-        // Shape PDF Name header if needed
+        setSafeFont("normal");
         const shapedPdfName = fontName !== "helvetica" ? shapeIndicText(pdfName) : pdfName;
         doc.text(`Source Document: ${shapedPdfName}`, marginX, y);
-        y += 20;
+        y += 25;
+
+        // Wrap and shape helper to prevent splitting vowel signs across lines
+        const wrapAndShape = (text: string, maxWidth: number): string[] => {
+          const rawLines = doc.splitTextToSize(text, maxWidth) as string[];
+          return rawLines.map((line) => (fontName !== "helvetica" ? shapeIndicText(line) : line));
+        };
 
         list.forEach((m, idx) => {
-          // Shape Indic text
-          const qText = fontName !== "helvetica" ? shapeIndicText(m.question) : m.question;
-          const optTexts = m.options.map(opt => fontName !== "helvetica" ? shapeIndicText(opt) : opt);
-          const ansText = fontName !== "helvetica" ? shapeIndicText(m.correctAnswer) : m.correctAnswer;
-          const expText = m.explanation ? (fontName !== "helvetica" ? shapeIndicText(m.explanation) : m.explanation) : "";
+          // Prepare content lines
+          const qText = m.question;
+          const optTexts = m.options;
+          const ansText = m.correctAnswer;
+          const expText = m.explanation || "";
 
-          // Split lines
-          if (fontName === "helvetica") {
-            doc.setFont("helvetica", "normal");
+          // Wrap questions and options
+          const questionLines = wrapAndShape(qText, contentWidth);
+          const optALines = wrapAndShape(`A. ${optTexts[0]}`, contentWidth);
+          const optBLines = wrapAndShape(`B. ${optTexts[1]}`, contentWidth);
+          const optCLines = wrapAndShape(`C. ${optTexts[2]}`, contentWidth);
+          const optDLines = wrapAndShape(`D. ${optTexts[3]}`, contentWidth);
+
+          const ansIndex = optTexts.indexOf(ansText);
+          const ansLetter = ansIndex !== -1 ? String.fromCharCode(65 + ansIndex) : "A";
+          const answerLines = wrapAndShape(`${ansLetter}. ${ansText}`, contentWidth);
+
+          const explanationLines = expText ? wrapAndShape(expText, contentWidth) : [];
+
+          // Calculate precise block height for pagination
+          let blockHeight = 0;
+          blockHeight += 15; // divider line space
+          blockHeight += 16; // Q1 label height + space
+          blockHeight += 8; // spacer
+          blockHeight += questionLines.length * 15; // question text height
+          blockHeight += 10; // spacer
+          blockHeight += optALines.length * 14 + 4; // Option A + spacing
+          blockHeight += optBLines.length * 14 + 4; // Option B + spacing
+          blockHeight += optCLines.length * 14 + 4; // Option C + spacing
+          blockHeight += optDLines.length * 14; // Option D
+          blockHeight += 10; // spacer
+          blockHeight += 14; // "Answer" label height
+          blockHeight += 6; // spacer
+          blockHeight += answerLines.length * 14; // answer text height
+
+          if (expText) {
+            blockHeight += 10; // spacer
+            blockHeight += 14; // "Explanation" label height
+            blockHeight += 6; // spacer
+            blockHeight += explanationLines.length * 13; // explanation text height
           }
-          const questionLines = doc.splitTextToSize(`${idx + 1}. ${qText}`, contentWidth);
-          const optionLinesList = optTexts.map((opt, oi) => 
-            doc.splitTextToSize(`${String.fromCharCode(65 + oi)}. ${opt}`, contentWidth - 15)
-          );
-          
-          const answerLines = doc.splitTextToSize(`Answer: ${String.fromCharCode(65 + m.options.indexOf(m.correctAnswer))}. ${ansText}`, contentWidth);
-          const explanationLines = expText ? doc.splitTextToSize(`Why: ${expText}`, contentWidth) : [];
 
-          // Calculate height
-          const qHeight = questionLines.length * 15;
-          const optsHeight = optionLinesList.reduce((acc, lines) => acc + (lines.length * 14), 0);
-          const ansHeight = answerLines.length * 14;
-          const expHeight = expText ? (explanationLines.length * 13) + 10 : 0;
-          
-          const totalBlockHeight = qHeight + optsHeight + ansHeight + expHeight + 40;
+          blockHeight += 20; // block padding
 
-          if (y + totalBlockHeight > pageHeight - marginY) {
+          // Page break check (prevents splitting a question block across pages)
+          if (y + blockHeight > pageHeight - marginY) {
             doc.addPage();
             if (base64Font && fontFileName && fontName) {
-              doc.setFont(fontName);
+              doc.setFont(fontName, "normal");
             }
             y = marginY + 15;
           }
@@ -2189,40 +2442,65 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
           doc.line(marginX, y, pageWidth - marginX, y);
           y += 15;
 
-          // Draw Question
+          // Question Number (e.g. Q1)
           doc.setFontSize(11);
+          setSafeFont("bold");
+          doc.text(`Q${idx + 1}`, marginX, y);
+          y += 16;
+
+          // Question Text
+          setSafeFont("normal");
           questionLines.forEach((line) => {
-            doc.text(line, marginX, y);
+            doc.text(line, marginX, y, { align: "justify" });
             y += 15;
           });
 
           // Options
-          y += 3;
-          optionLinesList.forEach((optLines) => {
-            optLines.forEach((line) => {
-              doc.text(line, marginX + 15, y);
+          y += 5;
+          const drawLines = (lines: string[]) => {
+            lines.forEach((line) => {
+              doc.text(line, marginX, y);
               y += 14;
             });
-            y += 2;
-          });
+          };
 
-          // Correct Answer
+          drawLines(optALines);
           y += 4;
+          drawLines(optBLines);
+          y += 4;
+          drawLines(optCLines);
+          y += 4;
+          drawLines(optDLines);
+
+          // Answer Label
+          y += 10;
+          doc.setFontSize(10);
+          setSafeFont("bold");
+          doc.text("Answer", marginX, y);
+          y += 14;
+
+          // Answer Text
+          setSafeFont("normal");
           answerLines.forEach((line) => {
             doc.text(line, marginX, y);
             y += 14;
           });
 
-          // Explanation
+          // Explanation (if present)
           if (expText) {
-            y += 6;
+            y += 10;
+            setSafeFont("bolditalic");
+            doc.text("Explanation", marginX, y);
+            y += 14;
+
+            setSafeFont("italic");
             explanationLines.forEach((line) => {
               doc.text(line, marginX, y);
               y += 13;
             });
           }
 
-          y += 10; // spacing after block
+          y += 15;
         });
 
         doc.save(`${pdfName.replace(".pdf", "")}_quiz.pdf`);
@@ -2235,7 +2513,9 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
     };
 
     if (fontUrl) {
-      const toastId = toast.loading(`Downloading Unicode font (${fontName}) to render PDF correctly...`);
+      const toastId = toast.loading(
+        `Downloading Unicode font (${fontName}) to render PDF correctly...`,
+      );
       fetch(fontUrl)
         .then((res) => {
           if (!res.ok) throw new Error("Font fetch failed");
@@ -2284,24 +2564,34 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto animate-fade-in print:p-0">
-      
       {/* Controls Menu */}
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border/40 pb-5 print:hidden">
         <div>
           <h2 className="text-3xl font-extrabold tracking-tight">Review Exam Sheet</h2>
           <p className="text-sm text-muted-foreground mt-1">
-            {mcqs.length} questions compiled. Modify text, shuffle options, or choose format to download.
+            {mcqs.length} questions compiled. Modify text, shuffle options, or choose format to
+            download.
           </p>
         </div>
-        
+
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={addNewQuestion} className="gap-1.5 border-dashed border-indigo-500/40 text-indigo-400">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={addNewQuestion}
+            className="gap-1.5 border-dashed border-indigo-500/40 text-indigo-400"
+          >
             <Plus className="h-4 w-4" /> Add Question
           </Button>
           <Button variant="outline" size="sm" onClick={shuffleAllQuestions} className="gap-1.5">
             <Shuffle className="h-4 w-4" /> Shuffle
           </Button>
-          <Button variant="default" size="sm" onClick={onStartTest} className="gap-1.5 bg-indigo-600 hover:bg-indigo-700 shadow-md">
+          <Button
+            variant="default"
+            size="sm"
+            onClick={onStartTest}
+            className="gap-1.5 bg-indigo-600 hover:bg-indigo-700 shadow-md"
+          >
             <Play className="h-4 w-4" /> Start Mock Test
           </Button>
         </div>
@@ -2348,7 +2638,9 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
             </SelectTrigger>
             <SelectContent>
               {categories.map((c) => (
-                <SelectItem key={c} value={c}>{c === "All" ? "All Categories" : c}</SelectItem>
+                <SelectItem key={c} value={c}>
+                  {c === "All" ? "All Categories" : c}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -2356,11 +2648,13 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
 
         <div className="flex items-center gap-2">
           {/* Export dropdown menu */}
-          <Select onValueChange={(val) => {
-            if (val === "pdf") downloadPdf();
-            if (val === "docx") downloadWord();
-            if (val === "xlsx") downloadExcel();
-          }}>
+          <Select
+            onValueChange={(val) => {
+              if (val === "pdf") downloadPdf();
+              if (val === "docx") downloadWord();
+              if (val === "xlsx") downloadExcel();
+            }}
+          >
             <SelectTrigger className="w-32 h-9 bg-indigo-500 text-white font-semibold text-xs border-indigo-600">
               <Download className="h-3.5 w-3.5 mr-1" />
               <span>Download</span>
@@ -2372,13 +2666,31 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
             </SelectContent>
           </Select>
 
-          <Button variant="outline" size="sm" onClick={copySelectedToClipboard} className="h-9" title="Copy Selected to Clipboard">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={copySelectedToClipboard}
+            className="h-9"
+            title="Copy Selected to Clipboard"
+          >
             <Copy className="h-4 w-4" />
           </Button>
-          <Button variant="outline" size="sm" onClick={copyAllToClipboard} className="h-9" title="Copy All to Clipboard">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={copyAllToClipboard}
+            className="h-9"
+            title="Copy All to Clipboard"
+          >
             <Sparkles className="h-4 w-4" />
           </Button>
-          <Button variant="outline" size="sm" onClick={printExam} className="h-9" title="Print Quiz">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={printExam}
+            className="h-9"
+            title="Print Quiz"
+          >
             <Printer className="h-4 w-4" />
           </Button>
         </div>
@@ -2386,11 +2698,12 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
 
       {/* 📄 EXAM PAPER VIEW */}
       <Card className="p-10 font-mono text-foreground border border-border shadow-lg relative bg-card overflow-hidden">
-        
         {/* Top Header info (Watermark / Paper feeling) */}
         <div className="text-center border-b-2 border-double border-border pb-6 mb-8">
           <h3 className="text-2xl font-bold tracking-widest uppercase">EXAM QUESTIONNAIRE</h3>
-          <p className="text-xs text-muted-foreground mt-1.5 uppercase font-semibold">TOTAL QUESTIONS COMPILED: {mcqs.length}</p>
+          <p className="text-xs text-muted-foreground mt-1.5 uppercase font-semibold">
+            TOTAL QUESTIONS COMPILED: {mcqs.length}
+          </p>
           <p className="text-xs text-muted-foreground mt-0.5">SOURCE DOCUMENT: {pdfName}</p>
         </div>
 
@@ -2428,13 +2741,31 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
                     <div className="group relative border-b border-dashed border-border/60 pb-8 hover:bg-muted/5 p-4 rounded-lg transition-colors mb-4 bg-card/40 backdrop-blur-sm">
                       {/* Checkbox and controls toolbar */}
                       <div className="absolute top-2 right-2 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity print:hidden">
-                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => shuffleOptions(i)} title="Shuffle Options">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          onClick={() => shuffleOptions(i)}
+                          title="Shuffle Options"
+                        >
                           <Shuffle className="h-3.5 w-3.5" />
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-indigo-500" onClick={() => setEditingIndex(isEditing ? null : i)} title="Edit Question">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-indigo-500"
+                          onClick={() => setEditingIndex(isEditing ? null : i)}
+                          title="Edit Question"
+                        >
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => deleteQuestion(i)} title="Delete Question">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-destructive"
+                          onClick={() => deleteQuestion(i)}
+                          title="Delete Question"
+                        >
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </div>
@@ -2447,13 +2778,23 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
                           onChange={() => toggleSelect(i)}
                           className="mt-1.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 print:hidden"
                         />
-                        
+
                         <div className="flex-1 space-y-4 w-full">
                           {/* Q# and Meta badges */}
                           <div className="flex items-center gap-2">
                             <span className="font-bold text-sm tracking-wide">Q{i + 1}</span>
-                            <Badge variant="outline" className="text-[10px] text-muted-foreground uppercase">{m.difficulty}</Badge>
-                            <Badge variant="outline" className="text-[10px] text-muted-foreground uppercase">{m.category}</Badge>
+                            <Badge
+                              variant="outline"
+                              className="text-[10px] text-muted-foreground uppercase"
+                            >
+                              {m.difficulty}
+                            </Badge>
+                            <Badge
+                              variant="outline"
+                              className="text-[10px] text-muted-foreground uppercase"
+                            >
+                              {m.category}
+                            </Badge>
                           </div>
 
                           {isEditing ? (
@@ -2471,10 +2812,14 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
 
                               {/* Options editor */}
                               <div className="space-y-2">
-                                <Label className="text-xs font-semibold">Options (Select radio for correct answer)</Label>
+                                <Label className="text-xs font-semibold">
+                                  Options (Select radio for correct answer)
+                                </Label>
                                 {m.options.map((opt, oi) => (
                                   <div key={oi} className="flex items-center gap-2">
-                                    <span className="text-sm font-bold">{String.fromCharCode(65 + oi)}.</span>
+                                    <span className="text-sm font-bold">
+                                      {String.fromCharCode(65 + oi)}.
+                                    </span>
                                     <Input
                                       value={opt}
                                       onChange={(e) => {
@@ -2505,14 +2850,20 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
                                 <Label className="text-xs font-semibold">Explanation</Label>
                                 <Textarea
                                   value={m.explanation}
-                                  onChange={(e) => updateQuestion(i, { explanation: e.target.value })}
+                                  onChange={(e) =>
+                                    updateQuestion(i, { explanation: e.target.value })
+                                  }
                                   rows={2}
                                   placeholder="Explanation why correct answer holds true..."
                                   className="font-mono text-sm"
                                 />
                               </div>
 
-                              <Button size="sm" onClick={() => setEditingIndex(null)} className="h-8">
+                              <Button
+                                size="sm"
+                                onClick={() => setEditingIndex(null)}
+                                className="h-8"
+                              >
                                 Save Changes
                               </Button>
                             </div>
@@ -2522,7 +2873,7 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
                               <p className="text-base font-medium leading-relaxed whitespace-pre-line pr-8">
                                 {m.question}
                               </p>
-                              
+
                               {/* Custom 4 options block */}
                               <div className="grid gap-2 grid-cols-1 md:grid-cols-2 pt-2">
                                 {m.options.map((opt, oi) => {
@@ -2542,17 +2893,18 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
                               </div>
 
                               <div className="pt-2 flex flex-col gap-1">
-                                <div className="text-sm font-semibold">
-                                  Answer:
-                                </div>
+                                <div className="text-sm font-semibold">Answer:</div>
                                 <div className="text-sm font-bold text-indigo-500">
-                                  {String.fromCharCode(65 + m.options.indexOf(m.correctAnswer))}. {m.correctAnswer}
+                                  {String.fromCharCode(65 + m.options.indexOf(m.correctAnswer))}.{" "}
+                                  {m.correctAnswer}
                                 </div>
                               </div>
 
                               {m.explanation && (
                                 <p className="text-xs text-muted-foreground mt-2 border-t border-border/10 pt-2 leading-relaxed">
-                                  <span className="font-bold uppercase tracking-wider text-[10px] text-foreground block mb-0.5">Why:</span>
+                                  <span className="font-bold uppercase tracking-wider text-[10px] text-foreground block mb-0.5">
+                                    Why:
+                                  </span>
                                   {m.explanation}
                                 </p>
                               )}
@@ -2621,7 +2973,6 @@ function MockTest({ mcqs, onSubmit, onExit }: MockProps) {
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto animate-fade-in">
-      
       {/* Test toolbar info */}
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border/40 pb-5">
         <div>
@@ -2635,19 +2986,27 @@ function MockTest({ mcqs, onSubmit, onExit }: MockProps) {
           <div className="text-lg font-mono font-bold bg-indigo-500/10 text-indigo-400 px-4 py-1.5 rounded-xl border border-indigo-500/20">
             {formatTime(elapsedSeconds)}
           </div>
-          <Button variant="outline" size="sm" onClick={onExit}>Exit Quiz</Button>
-          <Button onClick={() => onSubmit(userAnswers, elapsedSeconds)} className="bg-indigo-600 hover:bg-indigo-700">Submit Exam</Button>
+          <Button variant="outline" size="sm" onClick={onExit}>
+            Exit Quiz
+          </Button>
+          <Button
+            onClick={() => onSubmit(userAnswers, elapsedSeconds)}
+            className="bg-indigo-600 hover:bg-indigo-700"
+          >
+            Submit Exam
+          </Button>
         </div>
       </div>
 
       <Progress value={(answeredCount / total) * 100} className="h-2.5" />
 
       <div className="grid gap-6 md:grid-cols-[1fr_260px]">
-        
         {/* Core Question sheet */}
         <Card className="p-8 bg-card/60 backdrop-blur-sm border-border space-y-6">
           <div className="flex items-center justify-between border-b border-border/30 pb-3">
-            <Badge className="bg-indigo-500 font-bold uppercase tracking-wider text-xs">Question {currentIdx + 1} of {total}</Badge>
+            <Badge className="bg-indigo-500 font-bold uppercase tracking-wider text-xs">
+              Question {currentIdx + 1} of {total}
+            </Badge>
             <Button
               variant="ghost"
               size="sm"
@@ -2659,9 +3018,7 @@ function MockTest({ mcqs, onSubmit, onExit }: MockProps) {
             </Button>
           </div>
 
-          <p className="text-xl font-bold leading-relaxed text-foreground">
-            {currentMCQ.question}
-          </p>
+          <p className="text-xl font-bold leading-relaxed text-foreground">{currentMCQ.question}</p>
 
           <div className="grid gap-3 pt-4">
             {currentMCQ.options.map((opt, oi) => {
@@ -2678,7 +3035,9 @@ function MockTest({ mcqs, onSubmit, onExit }: MockProps) {
                 >
                   <span
                     className={`grid h-8 w-8 place-items-center rounded-lg text-xs font-bold ${
-                      isSelected ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                      isSelected
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-muted-foreground"
                     }`}
                   >
                     {String.fromCharCode(65 + oi)}
@@ -2691,7 +3050,11 @@ function MockTest({ mcqs, onSubmit, onExit }: MockProps) {
 
           {/* Navigation Controls */}
           <div className="flex items-center justify-between pt-6 border-t border-border/30">
-            <Button variant="outline" onClick={() => setCurrentIdx(Math.max(0, currentIdx - 1))} disabled={currentIdx === 0}>
+            <Button
+              variant="outline"
+              onClick={() => setCurrentIdx(Math.max(0, currentIdx - 1))}
+              disabled={currentIdx === 0}
+            >
               <ChevronLeft className="mr-1.5 h-4 w-4" /> Previous
             </Button>
 
@@ -2719,7 +3082,9 @@ function MockTest({ mcqs, onSubmit, onExit }: MockProps) {
 
         {/* Side Panel grid index navigator */}
         <Card className="p-6 bg-card/60 backdrop-blur-sm border-border h-fit">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-4">Exam Navigation</h3>
+          <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-4">
+            Exam Navigation
+          </h3>
           <div className="grid grid-cols-4 gap-2">
             {mcqs.map((_, idx) => {
               const isAnswered = userAnswers[idx] !== undefined;
@@ -2814,64 +3179,91 @@ function Results({ mcqs, answers, testTime, onRetake, onEdit, onNew }: ResultsPr
 
   return (
     <div className="space-y-8 max-w-4xl mx-auto animate-fade-in">
-      
       {/* Score Summary Card */}
       <Card className="p-10 text-center bg-card border border-border shadow-lg relative overflow-hidden">
-        
         {/* Glow effect */}
         <div className="absolute top-0 left-1/2 -translate-x-1/2 h-40 w-80 bg-gradient-to-b from-indigo-500/10 to-transparent blur-3xl" />
 
-        <p className="text-sm font-bold uppercase tracking-widest text-muted-foreground">Test Results Summary</p>
-        
+        <p className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
+          Test Results Summary
+        </p>
+
         <div className="mt-6 flex flex-col items-center">
           <div className="relative flex items-center justify-center h-36 w-36 rounded-full border-4 border-indigo-500/20 bg-indigo-500/5">
-            <span className="text-5xl font-extrabold tracking-tighter text-indigo-500">{scorePct}%</span>
+            <span className="text-5xl font-extrabold tracking-tighter text-indigo-500">
+              {scorePct}%
+            </span>
           </div>
           <h3 className="text-2xl font-extrabold mt-6 tracking-tight">
-            {scorePct >= 80 ? "Excellent Job! 🎉" : scorePct >= 50 ? "Good Effort 👍" : "Need more study! 📚"}
+            {scorePct >= 80
+              ? "Excellent Job! 🎉"
+              : scorePct >= 50
+                ? "Good Effort 👍"
+                : "Need more study! 📚"}
           </h3>
           <p className="text-muted-foreground mt-2 text-sm max-w-sm leading-relaxed">
-            You got <span className="font-bold text-foreground">{correctCount}</span> correct, skipped <span className="font-bold text-foreground">{skippedCount}</span>, and missed <span className="font-bold text-foreground">{incorrectCount}</span> questions out of <span className="font-bold text-foreground">{mcqs.length}</span> total.
+            You got <span className="font-bold text-foreground">{correctCount}</span> correct,
+            skipped <span className="font-bold text-foreground">{skippedCount}</span>, and missed{" "}
+            <span className="font-bold text-foreground">{incorrectCount}</span> questions out of{" "}
+            <span className="font-bold text-foreground">{mcqs.length}</span> total.
           </p>
         </div>
 
         <div className="mt-8 grid gap-4 sm:grid-cols-2 max-w-md mx-auto">
           <div className="p-4 rounded-xl border border-border bg-background/50 text-left">
-            <span className="text-xs text-muted-foreground font-semibold uppercase tracking-wider block">Time Elapsed</span>
+            <span className="text-xs text-muted-foreground font-semibold uppercase tracking-wider block">
+              Time Elapsed
+            </span>
             <span className="text-lg font-bold mt-1 block">{formatTime(testTime)}</span>
           </div>
           <div className="p-4 rounded-xl border border-border bg-background/50 text-left">
-            <span className="text-xs text-muted-foreground font-semibold uppercase tracking-wider block">Average Speed</span>
-            <span className="text-lg font-bold mt-1 block">{(testTime / mcqs.length).toFixed(1)}s / Q</span>
+            <span className="text-xs text-muted-foreground font-semibold uppercase tracking-wider block">
+              Average Speed
+            </span>
+            <span className="text-lg font-bold mt-1 block">
+              {(testTime / mcqs.length).toFixed(1)}s / Q
+            </span>
           </div>
         </div>
 
         <div className="mt-10 flex flex-wrap justify-center gap-3">
-          <Button variant="outline" onClick={onEdit}>Back to Editor</Button>
+          <Button variant="outline" onClick={onEdit}>
+            Back to Editor
+          </Button>
           <Button variant="outline" onClick={onRetake} className="gap-1.5">
             <RotateCcw className="h-4 w-4" /> Retake Test
           </Button>
-          <Button onClick={onNew} className="bg-indigo-600 hover:bg-indigo-700">Upload New PDF</Button>
+          <Button onClick={onNew} className="bg-indigo-600 hover:bg-indigo-700">
+            Upload New PDF
+          </Button>
         </div>
       </Card>
 
       {/* Category Performance Breakdown */}
       <Card className="p-8 bg-card/60 backdrop-blur-sm border-border">
         <h3 className="text-xl font-bold tracking-tight mb-5">Subject Performance Breakdown</h3>
-        
+
         <div className="space-y-4">
           {categoryAnalysis.map((cat, i) => (
             <div key={i} className="space-y-2">
               <div className="flex items-center justify-between text-sm">
-                <span className="font-semibold text-foreground">{cat.name} ({cat.correct}/{cat.total})</span>
-                <span className={`font-bold ${cat.pct >= 85 ? "text-emerald-500" : cat.pct >= 50 ? "text-amber-500" : "text-destructive"}`}>
+                <span className="font-semibold text-foreground">
+                  {cat.name} ({cat.correct}/{cat.total})
+                </span>
+                <span
+                  className={`font-bold ${cat.pct >= 85 ? "text-emerald-500" : cat.pct >= 50 ? "text-amber-500" : "text-destructive"}`}
+                >
                   {cat.pct}%
                 </span>
               </div>
               <div className="w-full bg-muted/60 h-2.5 rounded-full overflow-hidden">
                 <div
                   className={`h-2.5 rounded-full transition-all ${
-                    cat.pct >= 85 ? "bg-emerald-500" : cat.pct >= 50 ? "bg-amber-500" : "bg-destructive"
+                    cat.pct >= 85
+                      ? "bg-emerald-500"
+                      : cat.pct >= 50
+                        ? "bg-amber-500"
+                        : "bg-destructive"
                   }`}
                   style={{ width: `${cat.pct}%` }}
                 />
@@ -2884,24 +3276,40 @@ function Results({ mcqs, answers, testTime, onRetake, onEdit, onNew }: ResultsPr
       {/* Answer Key Review Details */}
       <div className="space-y-4">
         <h3 className="text-xl font-bold tracking-tight mb-2">Question Answer Review</h3>
-        
+
         {mcqs.map((m, i) => {
           const chosen = answers[i];
           const isCorrect = chosen === m.correctAnswer;
           const isSkipped = chosen === undefined;
 
           return (
-            <Card key={i} className={`p-6 border ${
-              isCorrect ? "border-emerald-500/20 bg-emerald-500/5" :
-              isSkipped ? "border-amber-500/20 bg-amber-500/5" : "border-destructive/20 bg-destructive/5"
-            }`}>
+            <Card
+              key={i}
+              className={`p-6 border ${
+                isCorrect
+                  ? "border-emerald-500/20 bg-emerald-500/5"
+                  : isSkipped
+                    ? "border-amber-500/20 bg-amber-500/5"
+                    : "border-destructive/20 bg-destructive/5"
+              }`}
+            >
               <div className="flex items-start gap-4">
-                <div className={`p-2.5 rounded-xl shrink-0 ${
-                  isCorrect ? "bg-emerald-500/10 text-emerald-500" :
-                  isSkipped ? "bg-amber-500/10 text-amber-500" : "bg-destructive/10 text-destructive"
-                }`}>
-                  {isCorrect ? <CheckCircle2 className="h-5 w-5" /> : 
-                   isSkipped ? <HelpCircle className="h-5 w-5" /> : <XCircle className="h-5 w-5" />}
+                <div
+                  className={`p-2.5 rounded-xl shrink-0 ${
+                    isCorrect
+                      ? "bg-emerald-500/10 text-emerald-500"
+                      : isSkipped
+                        ? "bg-amber-500/10 text-amber-500"
+                        : "bg-destructive/10 text-destructive"
+                  }`}
+                >
+                  {isCorrect ? (
+                    <CheckCircle2 className="h-5 w-5" />
+                  ) : isSkipped ? (
+                    <HelpCircle className="h-5 w-5" />
+                  ) : (
+                    <XCircle className="h-5 w-5" />
+                  )}
                 </div>
 
                 <div className="flex-1 space-y-3.5">
@@ -2914,19 +3322,30 @@ function Results({ mcqs, answers, testTime, onRetake, onEdit, onNew }: ResultsPr
                     {m.options.map((opt, oi) => {
                       const isChosenOption = chosen === opt;
                       const isCorrectOption = m.correctAnswer === opt;
-                      
+
                       return (
                         <div
                           key={oi}
                           className={`flex items-center gap-2 ${
-                            isCorrectOption ? "font-bold text-emerald-500" :
-                            isChosenOption ? "text-destructive font-semibold" : "text-muted-foreground"
+                            isCorrectOption
+                              ? "font-bold text-emerald-500"
+                              : isChosenOption
+                                ? "text-destructive font-semibold"
+                                : "text-muted-foreground"
                           }`}
                         >
                           <span className="font-bold">{String.fromCharCode(65 + oi)}.</span>
                           <span>{opt}</span>
-                          {isCorrectOption && <Badge className="bg-emerald-500 h-5 text-[9px] uppercase font-bold shrink-0">Correct</Badge>}
-                          {isChosenOption && !isCorrectOption && <Badge className="bg-destructive h-5 text-[9px] uppercase font-bold shrink-0">Your Answer</Badge>}
+                          {isCorrectOption && (
+                            <Badge className="bg-emerald-500 h-5 text-[9px] uppercase font-bold shrink-0">
+                              Correct
+                            </Badge>
+                          )}
+                          {isChosenOption && !isCorrectOption && (
+                            <Badge className="bg-destructive h-5 text-[9px] uppercase font-bold shrink-0">
+                              Your Answer
+                            </Badge>
+                          )}
                         </div>
                       );
                     })}
@@ -2934,7 +3353,9 @@ function Results({ mcqs, answers, testTime, onRetake, onEdit, onNew }: ResultsPr
 
                   {m.explanation && (
                     <div className="text-xs text-muted-foreground mt-4 pt-3.5 border-t border-border/20 leading-relaxed">
-                      <span className="font-bold text-foreground block uppercase text-[10px] mb-1">Explanation:</span>
+                      <span className="font-bold text-foreground block uppercase text-[10px] mb-1">
+                        Explanation:
+                      </span>
                       {m.explanation}
                     </div>
                   )}

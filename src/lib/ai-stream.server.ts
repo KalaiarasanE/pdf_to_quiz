@@ -21,11 +21,23 @@ export type MCQ = {
 };
 
 export async function* generateMCQStream(config: StreamConfig): AsyncGenerator<MCQ, void, unknown> {
-  const { text, count, difficulty, apiKey, apiProvider = "gemini", modelName, env, selectedLanguage } = config;
+  const {
+    text,
+    count,
+    difficulty,
+    apiKey,
+    apiProvider = "gemini",
+    modelName,
+    env,
+    selectedLanguage,
+  } = config;
 
-  const serverGeminiKey = (env && typeof env === "object" && (env as any).GEMINI_API_KEY) || process.env.GEMINI_API_KEY;
-  const serverOpenAIKey = (env && typeof env === "object" && (env as any).OPENAI_API_KEY) || process.env.OPENAI_API_KEY;
-  const serverLovableKey = (env && typeof env === "object" && (env as any).LOVABLE_API_KEY) || process.env.LOVABLE_API_KEY;
+  const serverGeminiKey =
+    (env && typeof env === "object" && (env as any).GEMINI_API_KEY) || process.env.GEMINI_API_KEY;
+  const serverOpenAIKey =
+    (env && typeof env === "object" && (env as any).OPENAI_API_KEY) || process.env.OPENAI_API_KEY;
+  const serverLovableKey =
+    (env && typeof env === "object" && (env as any).LOVABLE_API_KEY) || process.env.LOVABLE_API_KEY;
 
   // Truncate long texts
   const MAX_CHARS = 100000;
@@ -36,11 +48,12 @@ export async function* generateMCQStream(config: StreamConfig): AsyncGenerator<M
       ? "Use a mix of Easy, Medium, and Hard difficulty levels."
       : `All questions must be ${difficulty} difficulty.`;
 
-  const languageInstruction = selectedLanguage && selectedLanguage !== "mixed"
-    ? `You MUST output all questions, options, correct answers, and explanations in the "${selectedLanguage}" language.`
-    : selectedLanguage === "mixed"
-    ? `You MUST output all questions, options, correct answers, and explanations in the original mixed-language format of the study material.`
-    : `You MUST detect the primary language of the provided study material and output the generated questions, options, correct answers, and explanations in the EXACT same language as the study material. For example, if the material is in Tamil, generate questions in Tamil. Never translate the content unless the user explicitly requests translation.`;
+  const languageInstruction =
+    selectedLanguage && selectedLanguage !== "mixed"
+      ? `You MUST output all questions, options, correct answers, and explanations in the "${selectedLanguage}" language.`
+      : selectedLanguage === "mixed"
+        ? `You MUST output all questions, options, correct answers, and explanations in the original mixed-language format of the study material.`
+        : `You MUST detect the primary language of the provided study material and output the generated questions, options, correct answers, and explanations in the EXACT same language as the study material. For example, if the material is in Tamil, generate questions in Tamil. Never translate the content unless the user explicitly requests translation.`;
 
   const systemPrompt = `You are an expert exam question writer. Read the provided study material carefully and produce high-quality multiple choice questions.
 
@@ -78,7 +91,7 @@ ${sourceText}
   let body: any = {};
 
   const effectiveProvider = apiProvider;
-  
+
   if (effectiveProvider === "gemini") {
     const key = apiKey || serverGeminiKey;
     if (!key) {
@@ -152,7 +165,7 @@ ${sourceText}
 
   function* parseTextBuffer(newText: string): Generator<MCQ, void, unknown> {
     textBuffer += newText;
-    
+
     let newlineIdx;
     while ((newlineIdx = textBuffer.indexOf("\n")) !== -1) {
       const line = textBuffer.slice(0, newlineIdx).trim();
@@ -203,30 +216,30 @@ ${sourceText}
         while (true) {
           const startCandidate = buffer.indexOf('"candidates"', searchIndex);
           if (startCandidate === -1) break;
-          
+
           const startText = buffer.indexOf('"text"', startCandidate);
           if (startText === -1) {
             searchIndex = startCandidate + 12;
             continue;
           }
-          
+
           const quoteStart = buffer.indexOf('"', startText + 6);
           if (quoteStart === -1) {
             searchIndex = startText + 6;
             continue;
           }
-          
+
           // Find the matching unescaped ending quote
           let quoteEnd = quoteStart + 1;
           let found = false;
           while (quoteEnd < buffer.length) {
-            if (buffer[quoteEnd] === '"' && buffer[quoteEnd - 1] !== '\\') {
+            if (buffer[quoteEnd] === '"' && buffer[quoteEnd - 1] !== "\\") {
               found = true;
               break;
             }
             quoteEnd++;
           }
-          
+
           if (!found) {
             break;
           }
@@ -236,7 +249,7 @@ ${sourceText}
             const unescapedText = JSON.parse(`"${escapedText}"`);
             textSegments += unescapedText;
           } catch (err) {}
-          
+
           buffer = buffer.slice(quoteEnd + 1);
           searchIndex = 0;
         }
@@ -315,4 +328,3 @@ ${sourceText}
     reader.releaseLock();
   }
 }
-

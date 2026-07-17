@@ -77,13 +77,13 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "QuizForge — Turn PDFs into MCQs with AI" },
+      { title: "QuizCrack — Turn PDFs into MCQs with AI" },
       {
         name: "description",
         content:
           "Upload any PDF and instantly generate high-quality multiple choice questions with explanations. Edit, take a mock test, and review results.",
       },
-      { property: "og:title", content: "QuizForge — Turn PDFs into MCQs with AI" },
+      { property: "og:title", content: "QuizCrack — Turn PDFs into MCQs with AI" },
       {
         property: "og:description",
         content: "Upload a PDF and get exam-ready MCQs in seconds.",
@@ -97,7 +97,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         rel: "stylesheet",
         href: appCss,
       },
-      { rel: "icon", href: "/favicon.ico", type: "image/x-icon" },
+      { rel: "icon", href: "/logo.png", type: "image/png" },
     ],
   }),
   shellComponent: RootShell,

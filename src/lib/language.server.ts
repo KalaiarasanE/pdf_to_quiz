@@ -2,7 +2,8 @@ export interface DetectResult {
   isMultilingual: boolean;
   primaryLanguage: string;
   languages: string[];
-  fontEncoding: "Unicode" | "Bamini" | "TAB" | "TAM" | "TSCII" | "Shree-Lipi" | "other-legacy" | "None";
+  fontEncoding:
+    "Unicode" | "Bamini" | "TAB" | "TAM" | "TSCII" | "Shree-Lipi" | "other-legacy" | "None";
   hasLegacyTamil: boolean;
 }
 
@@ -25,7 +26,7 @@ export async function detectLanguage(text: string, env: any): Promise<DetectResu
   if (hasLegacyTamil) {
     // If it contains more than 5% legacy Tamil patterns, we know it's legacy Tamil!
     let fontEncoding: DetectResult["fontEncoding"] = "other-legacy";
-    
+
     // Simple heuristics for specific legacy fonts
     if (text.includes("d;") || text.includes("y;") || text.includes("thz")) {
       fontEncoding = "Bamini";
@@ -38,14 +39,15 @@ export async function detectLanguage(text: string, env: any): Promise<DetectResu
       primaryLanguage: "Tamil",
       languages: ["Tamil"],
       fontEncoding,
-      hasLegacyTamil: true
+      hasLegacyTamil: true,
     };
   }
 
   // 2. Otherwise, check standard Tamil Unicode presence
   const hasTamilUnicode = /[\u0B80-\u0BFF]/.test(text);
 
-  const apiKey = (env && typeof env === "object" && (env as any).GEMINI_API_KEY) || process.env.GEMINI_API_KEY;
+  const apiKey =
+    (env && typeof env === "object" && (env as any).GEMINI_API_KEY) || process.env.GEMINI_API_KEY;
   if (!apiKey) {
     // Default fallback if no key is configured
     if (hasTamilUnicode) {
@@ -54,7 +56,7 @@ export async function detectLanguage(text: string, env: any): Promise<DetectResu
         primaryLanguage: "Tamil",
         languages: ["Tamil"],
         fontEncoding: "Unicode",
-        hasLegacyTamil: false
+        hasLegacyTamil: false,
       };
     }
     return {
@@ -62,7 +64,7 @@ export async function detectLanguage(text: string, env: any): Promise<DetectResu
       primaryLanguage: "English",
       languages: ["English"],
       fontEncoding: "None",
-      hasLegacyTamil: false
+      hasLegacyTamil: false,
     };
   }
 
@@ -81,8 +83,8 @@ Return ONLY a valid JSON object matching the schema below. Do not wrap the JSON 
     contents: [{ role: "user", parts: [{ text: `${systemPrompt}\n\nTEXT TO ANALYZE:\n${text}` }] }],
     generationConfig: {
       temperature: 0.1,
-      responseMimeType: "application/json"
-    }
+      responseMimeType: "application/json",
+    },
   };
 
   try {
@@ -101,7 +103,10 @@ Return ONLY a valid JSON object matching the schema below. Do not wrap the JSON 
     if (responseText) {
       let cleanText = responseText.trim();
       if (cleanText.startsWith("```")) {
-        cleanText = cleanText.replace(/^```(?:json)?/, "").replace(/```$/, "").trim();
+        cleanText = cleanText
+          .replace(/^```(?:json)?/, "")
+          .replace(/```$/, "")
+          .trim();
       }
       const parsed = JSON.parse(cleanText);
       const primLang = parsed.primaryLanguage || "English";
@@ -110,7 +115,7 @@ Return ONLY a valid JSON object matching the schema below. Do not wrap the JSON 
         primaryLanguage: primLang,
         languages: Array.isArray(parsed.languages) ? parsed.languages : [primLang],
         fontEncoding: primLang === "Tamil" && hasTamilUnicode ? "Unicode" : "None",
-        hasLegacyTamil: false
+        hasLegacyTamil: false,
       };
     }
   } catch (error) {
@@ -140,24 +145,33 @@ Return ONLY a valid JSON object matching the schema below. Do not wrap the JSON 
     primaryLanguage: primary,
     languages: foundLangs.length > 0 ? foundLangs : ["English"],
     fontEncoding: primary === "Tamil" ? "Unicode" : "None",
-    hasLegacyTamil: false
+    hasLegacyTamil: false,
   };
 }
 
-async function fetchWithRetry(url: string, options: RequestInit, retries = 3, delay = 1500): Promise<Response> {
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  retries = 3,
+  delay = 1500,
+): Promise<Response> {
   try {
     const res = await fetch(url, options);
     if ((res.status === 429 || res.status >= 500) && retries > 0) {
       const retryAfter = res.headers.get("retry-after");
       const waitTime = retryAfter ? parseInt(retryAfter, 10) * 1000 : delay;
-      console.warn(`API returned status ${res.status}. Retrying in ${waitTime}ms... (${retries} retries left)`);
+      console.warn(
+        `API returned status ${res.status}. Retrying in ${waitTime}ms... (${retries} retries left)`,
+      );
       await new Promise((resolve) => setTimeout(resolve, waitTime));
       return fetchWithRetry(url, options, retries - 1, delay * 2);
     }
     return res;
   } catch (err) {
     if (retries > 0) {
-      console.warn(`Fetch connection error: ${err}. Retrying in ${delay}ms... (${retries} retries left)`);
+      console.warn(
+        `Fetch connection error: ${err}. Retrying in ${delay}ms... (${retries} retries left)`,
+      );
       await new Promise((resolve) => setTimeout(resolve, delay));
       return fetchWithRetry(url, options, retries - 1, delay * 2);
     }
@@ -166,7 +180,8 @@ async function fetchWithRetry(url: string, options: RequestInit, retries = 3, de
 }
 
 export async function convertLegacyTamil(text: string, env: any): Promise<string> {
-  const apiKey = (env && typeof env === "object" && (env as any).GEMINI_API_KEY) || process.env.GEMINI_API_KEY;
+  const apiKey =
+    (env && typeof env === "object" && (env as any).GEMINI_API_KEY) || process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error("No Gemini API key configured for legacy font conversion.");
   }
@@ -203,20 +218,33 @@ Examples of mappings to help you:
       const model = models[i];
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
       const body = {
-        contents: [{ role: "user", parts: [{ text: `${systemPrompt}\n\nConvert this legacy Tamil font text chunk to Unicode Tamil:\n${chunk}` }] }],
+        contents: [
+          {
+            role: "user",
+            parts: [
+              {
+                text: `${systemPrompt}\n\nConvert this legacy Tamil font text chunk to Unicode Tamil:\n${chunk}`,
+              },
+            ],
+          },
+        ],
         generationConfig: {
           temperature: 0.1,
-        }
+        },
       };
 
       try {
         console.log(`Converting legacy Tamil chunk ${index + 1} using model ${model}...`);
         const retries = i === models.length - 1 ? 3 : 0;
-        const response = await fetchWithRetry(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        }, retries);
+        const response = await fetchWithRetry(
+          url,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          },
+          retries,
+        );
 
         if (!response.ok) {
           const errText = await response.text().catch(() => "");

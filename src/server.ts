@@ -88,10 +88,12 @@ export default {
       if (url.pathname === "/api/generate" && request.method === "POST") {
         try {
           const config = await request.json();
-          console.log(`Generating ${config.count} MCQs with ${config.apiProvider} (${config.modelName})...`);
+          console.log(
+            `Generating ${config.count} MCQs with ${config.apiProvider} (${config.modelName})...`,
+          );
           const { generateMCQStream } = await import("./lib/ai-stream.server");
           const stream = generateMCQStream({ ...config, env });
- 
+
           const encoder = new TextEncoder();
           const readableStream = new ReadableStream({
             async start(controller) {
@@ -113,7 +115,7 @@ export default {
             headers: {
               "Content-Type": "application/x-ndjson; charset=utf-8",
               "Cache-Control": "no-cache",
-              "Connection": "keep-alive",
+              Connection: "keep-alive",
             },
           });
         } catch (error) {
