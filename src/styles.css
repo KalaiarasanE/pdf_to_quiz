@@ -186,35 +186,42 @@
     margin: 0 !important;
   }
 
-  /* Setup A4 Page Margins: Top/Bottom 20mm, Left/Right 20mm */
+  /* Setup A4 Page Margins: Top/Bottom 20mm, Left/Right 18mm */
   @page {
     size: A4 portrait;
-    margin: 20mm 20mm 20mm 20mm;
+    margin: 20mm 18mm 20mm 18mm;
   }
- 
+
   /* Questions Block formatting */
   .print-question-block {
     page-break-inside: avoid !important;
     break-inside: avoid !important;
-    margin-bottom: 24px !important; /* Question Gap */
+    margin-bottom: 20px !important; /* Question Gap */
     text-align: left !important;
     display: flex !important;
     flex-direction: column !important;
-    border-bottom: none !important;
-    padding-bottom: 0px !important;
-    background: white !important;
-    color: black !important;
+    border-bottom: 1px dashed #cccccc !important;
+    padding-bottom: 15px !important;
   }
- 
-  .print-question-text {
+
+  .print-question-number {
     font-size: 18px !important;
-    font-weight: 700 !important;
+    font-weight: 600 !important;
     line-height: 1.6 !important;
     margin-bottom: 10px !important; /* Paragraph Gap */
     color: black !important;
     text-align: left !important;
   }
- 
+
+  .print-question-text {
+    font-size: 18px !important;
+    font-weight: 600 !important;
+    line-height: 1.6 !important;
+    margin-bottom: 10px !important; /* Paragraph Gap */
+    color: black !important;
+    text-align: left !important;
+  }
+
   .print-option {
     font-size: 16px !important;
     font-weight: 400 !important;
@@ -223,17 +230,17 @@
     color: black !important;
     text-align: left !important;
   }
- 
+
   .print-answer-label {
     font-size: 16px !important;
     font-weight: 700 !important;
     line-height: 1.6 !important;
-    margin-bottom: 0px !important; /* No gap immediately below */
+    margin-bottom: 10px !important; /* Paragraph Gap */
     color: black !important;
     text-align: left !important;
     text-transform: none !important;
   }
- 
+
   .print-answer-text {
     font-size: 16px !important;
     font-weight: 700 !important;
@@ -242,31 +249,21 @@
     color: black !important;
     text-align: left !important;
   }
- 
+
   .print-explanation-label {
     font-size: 15px !important;
     font-weight: 700 !important;
     line-height: 1.6 !important;
-    margin-bottom: 0px !important; /* No gap immediately below */
+    margin-bottom: 10px !important; /* Paragraph Gap */
     color: black !important;
     text-align: left !important;
   }
- 
+
   .print-explanation-text {
     font-size: 15px !important;
     font-weight: 400 !important;
     line-height: 1.6 !important;
     margin-bottom: 10px !important;
-    color: black !important;
-    text-align: left !important;
-  }
-
-  .print-separator {
-    font-size: 16px !important;
-    font-family: monospace !important;
-    line-height: 1.6 !important;
-    margin-top: 24px !important;
-    margin-bottom: 24px !important;
     color: black !important;
     text-align: left !important;
   }

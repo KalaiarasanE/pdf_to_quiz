@@ -3098,7 +3098,6 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
   const [filterDifficulty, setFilterDifficulty] = useState<string>("All");
   const [filterCategory, setFilterCategory] = useState<string>("All");
   const [searchQuery, setSearchQuery] = useState<string>("");
-  const [showExplanations, setShowExplanations] = useState<boolean>(false);
 
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -3119,7 +3118,7 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
   const rowVirtualizer = useVirtualizer({
     count: filteredMCQs.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 280,
+    estimateSize: () => 220,
     overscan: 5,
   });
 
@@ -3430,12 +3429,12 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
         const pageWidth = doc.internal.pageSize.getWidth();
         const pageHeight = doc.internal.pageSize.getHeight();
 
-        // Margins: Top/Bottom 20mm (~56.7pt), Left/Right 20mm (~56.7pt)
-        const marginX = 56.7;
-        const marginY = 56.7;
+        // Margins: Top/Bottom/Left/Right 15mm (~42.52pt)
+        const marginX = 42.52;
+        const marginY = 42.52;
         const contentWidth = pageWidth - marginX * 2;
 
-        let y = marginY;
+        let y = marginY + 18;
 
         const setSafeFont = (style: "normal" | "bold" | "italic" | "bolditalic") => {
           if (fontName === "helvetica") {
@@ -3494,20 +3493,11 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
           return rawLines.map((line) => (fontName !== "helvetica" ? shapeIndicText(line) : line));
         };
 
-        const separatorLineStr = "------------------------------------------------";
-
-        // Draw top separator at the very beginning of first page
-        doc.setFontSize(16);
-        setSafeFont("normal");
-        drawShapedText(separatorLineStr, marginX, y);
-        y += 25.6 + 24;
-
         list.forEach((m, idx) => {
           // Prepare content lines
           const qText = `${idx + 1}. ${m.question}`;
           const optTexts = m.options;
           const ansText = m.correctAnswer;
-          const expText = m.explanation || "";
 
           // Wrap questions and options
           const questionLines = wrapAndShape(qText, contentWidth);
@@ -3520,24 +3510,18 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
           const ansLetter = ansIndex !== -1 ? String.fromCharCode(65 + ansIndex) : "A";
           const answerLines = wrapAndShape(`${ansLetter}) ${ansText}`, contentWidth);
 
-          const explanationLines = (showExplanations && expText) ? wrapAndShape(expText, contentWidth) : [];
-
-          // Calculate precise block height for pagination
+          // Calculate precise block height for pagination (1.6 line height)
           let blockHeight = 0;
-          blockHeight += questionLines.length * 28.8 + 10; // Question Text (18pt * 1.6) + Paragraph Gap
-          blockHeight += optALines.length * 25.6 + 10; // Option A (16pt * 1.6) + Paragraph Gap
-          blockHeight += optBLines.length * 25.6 + 10; // Option B (16pt * 1.6) + Paragraph Gap
-          blockHeight += optCLines.length * 25.6 + 10; // Option C (16pt * 1.6) + Paragraph Gap
-          blockHeight += optDLines.length * 25.6 + 10; // Option D (16pt * 1.6) + Paragraph Gap
-          blockHeight += 25.6; // "Answer:" Label (16pt * 1.6)
-          blockHeight += answerLines.length * 25.6; // Answer Text (16pt * 1.6)
-          if (showExplanations && expText) {
-            blockHeight += 10; // Paragraph Gap
-            blockHeight += 25.6; // "Explanation:" Label
-            blockHeight += explanationLines.length * 25.6; // Explanation Text
-          }
-          blockHeight += 24; // Question Gap (before separator)
-          blockHeight += 25.6; // Separator height
+          blockHeight += questionLines.length * 28.8; // Question (18pt)
+          blockHeight += 8; // Question to Options Gap
+          blockHeight += optALines.length * 25.6 + 6; // Option A + Option Gap
+          blockHeight += optBLines.length * 25.6 + 6; // Option B + Option Gap
+          blockHeight += optCLines.length * 25.6 + 6; // Option C + Option Gap
+          blockHeight += optDLines.length * 25.6; // Option D
+          blockHeight += 10; // Options to Answer Gap
+          blockHeight += 25.6; // "Answer:" label (16pt)
+          blockHeight += answerLines.length * 25.6; // Answer Text (16pt)
+          blockHeight += 20; // Question Gap
 
           // Page break check (prevents splitting a question block across pages)
           if (y + blockHeight > pageHeight - marginY) {
@@ -3545,66 +3529,50 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
             if (base64Font && fontFileName && fontName) {
               doc.setFont(fontName, "normal");
             }
-            y = marginY;
+            y = marginY + 18;
           }
 
-          // Question Number + Text - 18px (18pt) Bold
+          // Draw Question (18pt Bold)
           doc.setFontSize(18);
           setSafeFont("bold");
           questionLines.forEach((line) => {
             drawShapedText(line, marginX, y);
             y += 28.8;
           });
-          y += 10; // Paragraph Gap
 
-          // Options - 16px (16pt) Regular
+          // Draw Options (16pt Regular)
           doc.setFontSize(16);
           setSafeFont("normal");
-          const drawOptionGroup = (lines: string[]) => {
+          y += 8; // Question to Options Gap
+
+          const drawOptionLines = (lines: string[]) => {
             lines.forEach((line) => {
               drawShapedText(line, marginX, y);
               y += 25.6;
             });
-            y += 10; // Paragraph Gap
           };
 
-          drawOptionGroup(optALines);
-          drawOptionGroup(optBLines);
-          drawOptionGroup(optCLines);
-          drawOptionGroup(optDLines);
+          drawOptionLines(optALines);
+          y += 6; // Between Options Gap
+          drawOptionLines(optBLines);
+          y += 6;
+          drawOptionLines(optCLines);
+          y += 6;
+          drawOptionLines(optDLines);
 
-          // Answer Label - 16px Bold
+          // Draw Answer Label (16pt Bold)
+          y += 10; // Options to Answer Gap
           setSafeFont("bold");
           drawShapedText("Answer:", marginX, y);
-          y += 25.6; // No gap immediately below
+          y += 25.6;
 
-          // Answer Text - 16px Bold
+          // Draw Answer Text (16pt Bold)
           answerLines.forEach((line) => {
             drawShapedText(line, marginX, y);
             y += 25.6;
           });
 
-          // Explanation (if enabled)
-          if (showExplanations && expText) {
-            y += 10; // Paragraph Gap
-            setSafeFont("bold");
-            drawShapedText("Explanation:", marginX, y);
-            y += 25.6;
-
-            setSafeFont("normal");
-            explanationLines.forEach((line) => {
-              drawShapedText(line, marginX, y);
-              y += 25.6;
-            });
-          }
-
-          // Render bottom separator
-          y += 24; // Question Gap
-          doc.setFontSize(16);
-          setSafeFont("normal");
-          drawShapedText(separatorLineStr, marginX, y);
-          y += 25.6;
-          y += 24; // Question Gap (for the next question)
+          y += 20; // Question Gap
         });
 
         // Save file with original name prefix + _MCQs.pdf
@@ -3652,21 +3620,18 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
 
   // Helper formatting for Clipboard
   function formatExamPlaintext(questions: MCQ[]) {
-    let output = "------------------------------------------------\n\n";
+    let output = `Extracted ${questions.length} Questions\n\n`;
     questions.forEach((m, idx) => {
-      output += `${idx + 1}. ${m.question}\n\n`;
-      output += `A) ${m.options[0]}\n\n`;
-      output += `B) ${m.options[1]}\n\n`;
-      output += `C) ${m.options[2]}\n\n`;
-      output += `D) ${m.options[3]}\n\n`;
+      output += `------------------------------------------------\n\n`;
+      output += `Q${idx + 1}\n\n`;
+      output += `${m.question}\n\n`;
+      m.options.forEach((opt, oi) => {
+        output += `${String.fromCharCode(65 + oi)}. ${opt}\n\n`;
+      });
       output += `Answer:\n`;
       const ansIdx = m.options.indexOf(m.correctAnswer);
       const letter = ansIdx !== -1 ? String.fromCharCode(65 + ansIdx) : "A";
-      output += `${letter}) ${m.correctAnswer}\n\n`;
-      if (showExplanations && m.explanation) {
-        output += `Explanation:\n${m.explanation}\n\n`;
-      }
-      output += `------------------------------------------------\n\n`;
+      output += `${letter}. ${m.correctAnswer}\n\n`;
     });
     return output.trim();
   }
@@ -3753,20 +3718,6 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
               ))}
             </SelectContent>
           </Select>
-
-          {/* Show Explanations Toggle */}
-          <div className="flex items-center gap-1.5 border border-border/45 bg-background/50 rounded-lg px-3 h-9 select-none">
-            <input
-              type="checkbox"
-              id="showExplanationsToggle"
-              checked={showExplanations}
-              onChange={(e) => setShowExplanations(e.target.checked)}
-              className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-            />
-            <Label htmlFor="showExplanationsToggle" className="text-xs font-semibold text-muted-foreground cursor-pointer select-none">
-              Show Explanations
-            </Label>
-          </div>
         </div>
 
         <div className="flex items-center gap-2">
@@ -3820,16 +3771,24 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
       </div>
 
       {/* 📄 EXAM PAPER VIEW */}
-      <div className="p-10 font-sans text-black relative bg-white select-text">
+      <Card className="p-10 font-mono text-foreground border border-border shadow-lg relative bg-card overflow-hidden">
+        {/* Top Header info (Watermark / Paper feeling) */}
+        <div className="text-center border-b-2 border-double border-border pb-6 mb-8">
+          <h3 className="text-2xl font-bold tracking-widest uppercase">EXAM QUESTIONNAIRE</h3>
+          <p className="text-xs text-muted-foreground mt-1.5 uppercase font-semibold">
+            TOTAL QUESTIONS COMPILED: {mcqs.length}
+          </p>
+          <p className="text-xs text-muted-foreground mt-0.5">SOURCE DOCUMENT: {pdfName}</p>
+        </div>
+
         <div className="space-y-4">
-          {/* Static first separator line */}
-          <div className="font-mono text-[16px] text-black leading-[1.6] mb-[24px] select-none">
-            ------------------------------------------------
-          </div>
+          <p className="text-xs font-semibold text-muted-foreground uppercase pb-2">
+            Extracted {filteredMCQs.length} Questions (Matching Filters)
+          </p>
 
           <div
             ref={parentRef}
-            className="h-[750px] overflow-y-auto pr-2 bg-white text-black p-4"
+            className="h-[750px] overflow-y-auto pr-2 border border-border/40 rounded-xl bg-card/25 p-4 shadow-inner"
           >
             <div
               style={{
@@ -3853,7 +3812,7 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
                       transform: `translateY(${virtualRow.start}px)`,
                     }}
                   >
-                    <div className="group relative pb-[24px] bg-white text-black p-4 transition-colors mb-4">
+                    <div className="group relative border-b border-dashed border-border/60 pb-8 hover:bg-muted/5 p-4 rounded-lg transition-colors mb-4 bg-card/40 backdrop-blur-sm">
                       {/* Checkbox and controls toolbar */}
                       <div className="absolute top-2 right-2 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity print:hidden">
                         <Button
@@ -3885,37 +3844,54 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
                         </Button>
                       </div>
 
-                      <div className="relative pl-8">
+                      <div className="flex items-start gap-4">
                         {/* Selector Checkbox */}
                         <input
                           type="checkbox"
                           checked={isSelected}
                           onChange={() => toggleSelect(i)}
-                          className="absolute left-0 top-[6px] h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer print:hidden"
+                          className="mt-1.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 print:hidden"
                         />
 
-                        <div className="flex-1 w-full text-black bg-white">
+                        <div className="flex-1 space-y-4 w-full">
+                          {/* Q# and Meta badges */}
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-sm tracking-wide">Q{i + 1}</span>
+                            <Badge
+                              variant="outline"
+                              className="text-[10px] text-muted-foreground uppercase"
+                            >
+                              {m.difficulty}
+                            </Badge>
+                            <Badge
+                              variant="outline"
+                              className="text-[10px] text-muted-foreground uppercase"
+                            >
+                              {m.category}
+                            </Badge>
+                          </div>
+
                           {isEditing ? (
                             /* Inplace Edit mode */
-                            <div className="space-y-4 pt-2 text-black bg-white p-4 border border-indigo-200 rounded-lg">
+                            <div className="space-y-4 pt-2">
                               <div className="space-y-1.5">
-                                <Label className="text-xs font-semibold text-black">Question</Label>
+                                <Label className="text-xs font-semibold">Question</Label>
                                 <Textarea
                                   value={m.question}
                                   onChange={(e) => updateQuestion(i, { question: e.target.value })}
                                   rows={3}
-                                  className="font-sans text-sm border-gray-300 text-black bg-white"
+                                  className="font-mono text-sm"
                                 />
                               </div>
 
                               {/* Options editor */}
                               <div className="space-y-2">
-                                <Label className="text-xs font-semibold text-black">
+                                <Label className="text-xs font-semibold">
                                   Options (Select radio for correct answer)
                                 </Label>
                                 {m.options.map((opt, oi) => (
                                   <div key={oi} className="flex items-center gap-2">
-                                    <span className="text-sm font-bold text-black">
+                                    <span className="text-sm font-bold">
                                       {String.fromCharCode(65 + oi)}.
                                     </span>
                                     <Input
@@ -3930,7 +3906,7 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
                                         }
                                         updateQuestion(i, patch);
                                       }}
-                                      className="font-sans text-sm h-8 border-gray-300 text-black bg-white"
+                                      className="font-mono text-sm h-8"
                                     />
                                     <Button
                                       size="sm"
@@ -3938,6 +3914,7 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
                                       onClick={() => updateQuestion(i, { correctAnswer: opt })}
                                       className="h-8 text-xs shrink-0"
                                     >
+
                                       {m.correctAnswer === opt ? "Correct" : "Mark Correct"}
                                     </Button>
                                   </div>
@@ -3945,7 +3922,7 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
                               </div>
 
                               <div className="space-y-1.5">
-                                <Label className="text-xs font-semibold text-black">Explanation</Label>
+                                <Label className="text-xs font-semibold">Explanation</Label>
                                 <Textarea
                                   value={m.explanation}
                                   onChange={(e) =>
@@ -3953,58 +3930,62 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
                                   }
                                   rows={2}
                                   placeholder="Explanation why correct answer holds true..."
-                                  className="font-sans text-sm border-gray-300 text-black bg-white"
+                                  className="font-mono text-sm"
                                 />
                               </div>
 
                               <Button
                                 size="sm"
                                 onClick={() => setEditingIndex(null)}
-                                className="h-8 bg-indigo-600 text-white hover:bg-indigo-700"
+                                className="h-8"
                               >
                                 Save Changes
                               </Button>
                             </div>
                           ) : (
                             /* Clean Exam Render Format */
-                            <div className="space-y-[10px] text-black bg-white font-sans">
-                              {/* Question */}
-                              <div className="font-bold text-[18px] leading-[1.6]">
-                                {i + 1}. {m.question}
+                            <div className="space-y-3.5">
+                              <p className="text-base font-medium leading-relaxed whitespace-pre-line pr-8">
+                                {m.question}
+                              </p>
+
+                              {/* Custom 4 options block */}
+                              <div className="grid gap-2 grid-cols-1 md:grid-cols-2 pt-2">
+                                {m.options.map((opt, oi) => {
+                                  const isCorrect = opt === m.correctAnswer;
+                                  return (
+                                    <div
+                                      key={oi}
+                                      className={`text-sm leading-relaxed ${isCorrect ? "font-bold text-indigo-500" : ""}`}
+                                    >
+                                      <span className="font-bold mr-2 text-muted-foreground">
+                                        {String.fromCharCode(65 + oi)}.
+                                      </span>
+                                      {opt}
+                                    </div>
+                                  );
+                                })}
                               </div>
 
-                              {/* Options */}
-                              {m.options.map((opt, oi) => (
-                                <div key={oi} className="font-normal text-[16px] leading-[1.6]">
-                                  {String.fromCharCode(65 + oi)}) {opt}
-                                </div>
-                              ))}
-
-                              {/* Answer */}
-                              <div className="pt-[10px]">
-                                <div className="font-bold text-[16px] leading-[1.6]">Answer:</div>
-                                <div className="font-bold text-[16px] leading-[1.6]">
-                                  {String.fromCharCode(65 + m.options.indexOf(m.correctAnswer))}) {m.correctAnswer}
+                              <div className="pt-2 flex flex-col gap-1">
+                                <div className="text-sm font-semibold">Answer:</div>
+                                <div className="text-sm font-bold text-indigo-500">
+                                  {String.fromCharCode(65 + m.options.indexOf(m.correctAnswer))}.{" "}
+                                  {m.correctAnswer}
                                 </div>
                               </div>
 
-                              {/* Explanation */}
-                              {showExplanations && m.explanation && (
-                                <div className="pt-[10px] text-gray-700">
-                                  <div className="font-bold text-[15px] leading-[1.6]">Explanation:</div>
-                                  <div className="font-normal italic text-[15px] leading-[1.6]">
-                                    {m.explanation}
-                                  </div>
-                                </div>
+                              {m.explanation && (
+                                <p className="text-xs text-muted-foreground mt-2 border-t border-border/10 pt-2 leading-relaxed">
+                                  <span className="font-bold uppercase tracking-wider text-[10px] text-foreground block mb-0.5">
+                                    Why:
+                                  </span>
+                                  {m.explanation}
+                                </p>
                               )}
                             </div>
                           )}
                         </div>
-                      </div>
-
-                      {/* Separator line at bottom of each question */}
-                      <div className="font-mono text-[16px] text-black leading-[1.6] mt-[24px] select-none">
-                        ------------------------------------------------
                       </div>
                     </div>
                   </div>
@@ -4013,11 +3994,35 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
             </div>
           </div>
         </div>
-      </div>
+      </Card>
 
       {/* 🖨️ PRINT ONLY CONTAINER */}
-      <div className="print-only text-black bg-white font-sans">
-        <div className="print-separator">------------------------------------------------</div>
+      <div className="print-only">
+        <div
+          style={{
+            borderBottom: "2px double black",
+            paddingBottom: "15px",
+            marginBottom: "25px",
+            textAlign: "center",
+          }}
+        >
+          <h1
+            style={{
+              fontSize: "22px",
+              fontWeight: "bold",
+              margin: "0 0 5px 0",
+              textTransform: "uppercase",
+            }}
+          >
+            EXAM QUESTIONNAIRE
+          </h1>
+          <p style={{ fontSize: "12px", margin: "0", textTransform: "uppercase" }}>
+            SOURCE DOCUMENT: {pdfName}
+          </p>
+          <p style={{ fontSize: "12px", margin: "5px 0 0 0", textTransform: "uppercase" }}>
+            TOTAL QUESTIONS COMPILED: {mcqs.filter((_, idx) => selectedIndices.has(idx)).length}
+          </p>
+        </div>
         {mcqs
           .filter((_, idx) => selectedIndices.has(idx))
           .map((m, idx) => {
@@ -4025,22 +4030,22 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
             const ansLetter = ansIndex !== -1 ? String.fromCharCode(65 + ansIndex) : "A";
             return (
               <div key={idx} className="print-question-block">
-                <div className="print-question-text">{idx + 1}. {m.question}</div>
-                <div className="print-option">A) {m.options[0]}</div>
-                <div className="print-option">B) {m.options[1]}</div>
-                <div className="print-option">C) {m.options[2]}</div>
-                <div className="print-option">D) {m.options[3]}</div>
+                <div className="print-question-number">{idx + 1}</div>
+                <div className="print-question-text">{m.question}</div>
+                <div className="print-option">A. {m.options[0]}</div>
+                <div className="print-option">B. {m.options[1]}</div>
+                <div className="print-option">C. {m.options[2]}</div>
+                <div className="print-option">D. {m.options[3]}</div>
                 <div className="print-answer-label">Answer:</div>
                 <div className="print-answer-text">
-                  {ansLetter}) {m.correctAnswer}
+                  {ansLetter}. {m.correctAnswer}
                 </div>
-                {showExplanations && m.explanation && (
+                {m.explanation && (
                   <>
                     <div className="print-explanation-label">Explanation:</div>
                     <div className="print-explanation-text">{m.explanation}</div>
                   </>
                 )}
-                <div className="print-separator">------------------------------------------------</div>
               </div>
             );
           })}
