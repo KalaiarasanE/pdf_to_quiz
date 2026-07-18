@@ -755,7 +755,10 @@ function App() {
         y += 30;
 
         questions.forEach((m, idx) => {
-          const qText = m.question;
+          const cleanQuestion = m.question
+            .replace(/^\s*(?:Q|Question|Q\s*No)(?:\.|\s+No\.?|\s+No)?\s*\d+\s*[-.):]?\s*/i, "")
+            .replace(/^\s*Q\s*[-.):]\s*/i, "");
+          const qText = cleanQuestion;
           const optTexts = m.options;
           const ansText = m.correctAnswer;
           const expText = m.explanation || "";
@@ -805,7 +808,7 @@ function App() {
 
           doc.setFontSize(18);
           setSafeFont("bold");
-          drawShapedText(`${idx + 1}`, marginX, y);
+          drawShapedText(`${idx + 1}.`, marginX, y);
           y += 28.8 + 10;
 
           setSafeFont("bold");
@@ -3503,8 +3506,11 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
         y += 25.6 + 24;
 
         list.forEach((m, idx) => {
+          const cleanQuestion = m.question
+            .replace(/^\s*(?:Q|Question|Q\s*No)(?:\.|\s+No\.?|\s+No)?\s*\d+\s*[-.):]?\s*/i, "")
+            .replace(/^\s*Q\s*[-.):]\s*/i, "");
           // Prepare content lines
-          const qText = `${idx + 1}. ${m.question}`;
+          const qText = `${idx + 1}. ${cleanQuestion}`;
           const optTexts = m.options;
           const ansText = m.correctAnswer;
           const expText = m.explanation || "";
