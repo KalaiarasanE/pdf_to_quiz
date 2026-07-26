@@ -108,6 +108,7 @@ type PdfMeta = {
   lastModified?: number;
   hasLegacyTamil?: boolean;
   fontEncoding?: string;
+  fileType?: "pdf" | "doc" | "docx";
 };
 
 // Shared PDF generator adhering strictly to clean exam paper format
@@ -630,6 +631,68 @@ async function getPDFPagesTextFast(
   return results;
 }
 
+// Extract text and structure from Microsoft Word (.doc / .docx) files
+async function extractDocxText(file: File): Promise<{
+  fullText: string;
+  sampleText: string;
+  pagesCount: number;
+  isScanned: boolean;
+  pageList: { pageNum: number; text: string }[];
+}> {
+  const buf = await file.arrayBuffer();
+  let fullText = "";
+
+  try {
+    const mammoth = await import("mammoth");
+    const result = await mammoth.extractRawText({ arrayBuffer: buf });
+    fullText = result.value || "";
+  } catch (err) {
+    console.warn("Mammoth extraction failed, trying fallback text decoding:", err);
+    try {
+      const dec = new TextDecoder("utf-8");
+      const raw = dec.decode(buf);
+      fullText = raw
+        .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    } catch {
+      fullText = "";
+    }
+  }
+
+  if (!fullText || fullText.trim().length === 0) {
+    fullText = "No extractable text content found in Word document.";
+  }
+
+  const paragraphs = fullText.split(/\n\s*\n/).filter((p) => p.trim().length > 0);
+  const pageList: { pageNum: number; text: string }[] = [];
+  let currentPageText = "";
+  let pageNum = 1;
+
+  if (paragraphs.length > 0) {
+    for (const para of paragraphs) {
+      if (currentPageText.length + para.length > 1800 && currentPageText.length > 0) {
+        pageList.push({ pageNum, text: currentPageText.trim() });
+        pageNum++;
+        currentPageText = para + "\n\n";
+      } else {
+        currentPageText += para + "\n\n";
+      }
+    }
+    if (currentPageText.trim().length > 0) {
+      pageList.push({ pageNum, text: currentPageText.trim() });
+    }
+  } else {
+    pageList.push({ pageNum: 1, text: fullText });
+  }
+
+  const pagesCount = pageList.length;
+  const sampleText = fullText.slice(0, 3000);
+  const isScanned = fullText.trim().length < 50;
+
+  return { fullText, sampleText, pagesCount, isScanned, pageList };
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>("generate");
   const [stage, setStage] = useState<Stage>("upload");
@@ -996,8 +1059,16 @@ function App() {
 
   // Central File processing handler
   const handleGlobalFile = async (file: File) => {
-    if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
-      toast.error("Invalid file. Please upload a PDF file.");
+    const fileName = file.name.toLowerCase();
+    const isPdf = file.type === "application/pdf" || fileName.endsWith(".pdf");
+    const isDoc = fileName.endsWith(".doc");
+    const isDocx =
+      file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+      file.type === "application/msword" ||
+      fileName.endsWith(".docx");
+
+    if (!isPdf && !isDoc && !isDocx) {
+      toast.error("Invalid file format. Please upload a PDF (.pdf), Word (.doc), or Word (.docx) document.");
       return;
     }
     if (file.size > 100 * 1024 * 1024) {
@@ -1010,6 +1081,7 @@ function App() {
     setGlobalUploadStage("Checking local cache...");
 
     try {
+      const fileType = isPdf ? "pdf" : isDoc ? "doc" : "docx";
       const cacheKey = `pdf_cache_${file.name}_${file.size}_${file.lastModified}`;
       const cached = await PDFCache.get(cacheKey);
       if (cached) {
@@ -1027,8 +1099,26 @@ function App() {
       }
 
       setGlobalUploadProgress(30);
-      setGlobalUploadStage("Reading PDF structure...");
-      const { sampleText, pagesCount, isScanned } = await extractPdfSample(file);
+      let sampleText = "";
+      let pagesCount = 1;
+      let isScanned = false;
+      let extractedPageList: { pageNum: number; text: string }[] = [];
+
+      if (isPdf) {
+        setGlobalUploadStage("Reading PDF structure...");
+        const pdfData = await extractPdfSample(file);
+        sampleText = pdfData.sampleText;
+        pagesCount = pdfData.pagesCount;
+        isScanned = pdfData.isScanned;
+      } else {
+        setGlobalUploadStage("Reading Word document structure...");
+        setGlobalUploadProgress(40);
+        const docxData = await extractDocxText(file);
+        sampleText = docxData.sampleText;
+        pagesCount = docxData.pagesCount;
+        isScanned = docxData.isScanned;
+        extractedPageList = docxData.pageList;
+      }
 
       setGlobalUploadStage("Detecting language...");
       setGlobalUploadProgress(70);
@@ -1083,14 +1173,18 @@ function App() {
         name: file.name,
         size: file.size,
         pages: pagesCount,
-        chars: pagesCount * 1500,
+        chars: isPdf ? pagesCount * 1500 : sampleText.length,
         text: cleanSample,
         isScanned,
         isMultilingual,
         primaryLanguage,
         languages,
+        pageList: extractedPageList.length > 0 ? extractedPageList : undefined,
         lastModified: file.lastModified,
+        fileType,
       };
+
+      await PDFCache.set(cacheKey, meta);
 
       setGlobalUploadProgress(100);
       setGlobalUploadStage("Complete!");
@@ -1110,7 +1204,7 @@ function App() {
       }, 300);
     } catch (e) {
       console.error(e);
-      toast.error("Failed to parse PDF.");
+      toast.error("Failed to parse document file.");
       setGlobalUploading(false);
     }
   };
@@ -1988,8 +2082,16 @@ function UploadStage({ onLoaded, onSelectFile }: UploadProps) {
         return;
       }
 
-      if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
-        toast.error("Invalid file. Please upload a PDF file.");
+      const fileName = file.name.toLowerCase();
+      const isPdf = file.type === "application/pdf" || fileName.endsWith(".pdf");
+      const isDoc = fileName.endsWith(".doc");
+      const isDocx =
+        file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+        file.type === "application/msword" ||
+        fileName.endsWith(".docx");
+
+      if (!isPdf && !isDoc && !isDocx) {
+        toast.error("Invalid file format. Please upload a PDF (.pdf), Word (.doc), or Word (.docx) document.");
         return;
       }
       if (file.size > 100 * 1024 * 1024) {
@@ -2002,6 +2104,7 @@ function UploadStage({ onLoaded, onSelectFile }: UploadProps) {
       setStageName("Checking local cache...");
 
       try {
+        const fileType = isPdf ? "pdf" : isDoc ? "doc" : "docx";
         const cacheKey = `pdf_cache_${file.name}_${file.size}_${file.lastModified}`;
         const cached = await PDFCache.get(cacheKey);
         if (cached) {
@@ -2015,8 +2118,26 @@ function UploadStage({ onLoaded, onSelectFile }: UploadProps) {
         }
 
         setProgress(30);
-        setStageName("Reading PDF structure...");
-        const { sampleText, pagesCount, isScanned } = await extractPdfSample(file);
+        let sampleText = "";
+        let pagesCount = 1;
+        let isScanned = false;
+        let extractedPageList: { pageNum: number; text: string }[] = [];
+
+        if (isPdf) {
+          setStageName("Reading PDF structure...");
+          const pdfData = await extractPdfSample(file);
+          sampleText = pdfData.sampleText;
+          pagesCount = pdfData.pagesCount;
+          isScanned = pdfData.isScanned;
+        } else {
+          setStageName("Reading Word document structure...");
+          setProgress(40);
+          const docxData = await extractDocxText(file);
+          sampleText = docxData.sampleText;
+          pagesCount = docxData.pagesCount;
+          isScanned = docxData.isScanned;
+          extractedPageList = docxData.pageList;
+        }
 
         // Detect language
         setStageName("Detecting language...");
@@ -2072,14 +2193,18 @@ function UploadStage({ onLoaded, onSelectFile }: UploadProps) {
           name: file.name,
           size: file.size,
           pages: pagesCount,
-          chars: pagesCount * 1500, // Estimated characters count
+          chars: isPdf ? pagesCount * 1500 : sampleText.length,
           text: cleanSample,
           isScanned,
           isMultilingual,
           primaryLanguage,
           languages,
+          pageList: extractedPageList.length > 0 ? extractedPageList : undefined,
           lastModified: file.lastModified,
+          fileType,
         };
+
+        await PDFCache.set(cacheKey, meta);
 
         setProgress(100);
         setStageName("Complete!");
@@ -2088,23 +2213,23 @@ function UploadStage({ onLoaded, onSelectFile }: UploadProps) {
         }, 300);
       } catch (e) {
         console.error(e);
-        toast.error("Failed to parse PDF. The file may be password-protected or corrupt.");
+        toast.error("Failed to parse document file. The file may be password-protected or corrupt.");
       } finally {
         setBusy(false);
       }
     },
-    [onLoaded],
+    [onLoaded, onSelectFile],
   );
 
   return (
     <div className="space-y-8 max-w-4xl mx-auto animate-fade-in">
       <div className="space-y-3 text-center">
         <h1 className="text-4xl font-extrabold tracking-tight md:text-5xl bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500 bg-clip-text text-transparent">
-          Create Quizzes from PDFs in Seconds
+          Create Quizzes from Documents in Seconds
         </h1>
         <p className="mx-auto max-w-2xl text-muted-foreground">
-          Drop any study guide, research paper, textbook, or scanned PDF. Our AI parses pages in
-          parallel, runs OCR when needed, and generates custom exam questions.
+          Drop any study guide, textbook, PDF, or Word document (.pdf, .doc, .docx). Our AI parses text in
+          parallel and generates custom exam questions.
         </p>
       </div>
 
@@ -2130,14 +2255,14 @@ function UploadStage({ onLoaded, onSelectFile }: UploadProps) {
         <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-indigo-500/10 text-indigo-500 shadow-md">
           <Upload className="h-7 w-7" />
         </div>
-        <h2 className="mt-5 text-xl font-bold tracking-tight">Drag & drop your PDF file here</h2>
+        <h2 className="mt-5 text-xl font-bold tracking-tight">Drag & drop your PDF, DOC, or DOCX file here</h2>
         <p className="mt-2 text-sm text-muted-foreground max-w-sm mx-auto">
-          or click to browse your local files (Supports scanned documents & files up to 100MB)
+          or click to browse your local files (Supports PDF, Word .doc & .docx files up to 100MB)
         </p>
         <input
           ref={inputRef}
           type="file"
-          accept="application/pdf,.pdf"
+          accept="application/pdf,.pdf,.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
           className="hidden"
           onChange={(e) => {
             const file = e.target.files?.[0];
@@ -2364,9 +2489,21 @@ function ConfigureStage({
       addLog("Checking document text cache...");
       const cachedMeta = await PDFCache.get(textCacheKey);
 
-      if (cachedMeta && cachedMeta.pageList && cachedMeta.pageList.length > 0) {
+      if (pdf.pageList && pdf.pageList.length > 0) {
+        addLog("Found pre-extracted page text list.");
+        allPagesList = pdf.pageList;
+        setProgress(100);
+      } else if (cachedMeta && cachedMeta.pageList && cachedMeta.pageList.length > 0) {
         addLog("Cache hit! Found pre-extracted page text list in IndexedDB.");
         allPagesList = cachedMeta.pageList;
+        setProgress(100);
+      } else if (pdf.fileType === "doc" || pdf.fileType === "docx" || (currentFile && currentFile.name.match(/\.docx?$/i))) {
+        if (!currentFile) {
+          throw new Error("Missing reference to the uploaded Word document. Please try re-uploading.");
+        }
+        addLog("Extracting Word document text structure...");
+        const docxData = await extractDocxText(currentFile);
+        allPagesList = docxData.pageList;
         setProgress(100);
       } else {
         // Cache miss - load PDF and extract text
