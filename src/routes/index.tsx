@@ -110,6 +110,311 @@ type PdfMeta = {
   fontEncoding?: string;
 };
 
+// Shared PDF generator adhering strictly to clean exam paper format
+const generateExamPdf = (
+  pdfName: string,
+  questionsList: MCQ[],
+  includeExplanations: boolean = true,
+  onSuccess?: () => void
+) => {
+  if (!questionsList || questionsList.length === 0) {
+    toast.error("Please select at least one question to download.");
+    return;
+  }
+
+  const fullQuestionsText =
+    pdfName +
+    " " +
+    questionsList
+      .map(
+        (m) =>
+          (m.question || "") +
+          " " +
+          (m.options ? m.options.join(" ") : "") +
+          " " +
+          (m.correctAnswer || "") +
+          " " +
+          (m.explanation || "")
+      )
+      .join(" ");
+
+  let fontName = "helvetica";
+  let fontFileName = "";
+  let fontUrls: string[] = [];
+
+  if (/[\u0B80-\u0BFF]/.test(fullQuestionsText)) {
+    fontName = "NotoSansTamil";
+    fontFileName = "NotoSansTamil-Regular.ttf";
+    fontUrls = [
+      "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansTamil/NotoSansTamil-Regular.ttf",
+      "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts/main/hinted/ttf/NotoSansTamil/NotoSansTamil-Regular.ttf",
+    ];
+  } else if (/[\u0900-\u097F]/.test(fullQuestionsText)) {
+    fontName = "NotoSansDevanagari";
+    fontFileName = "NotoSansDevanagari-Regular.ttf";
+    fontUrls = [
+      "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Regular.ttf",
+      "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts/main/hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Regular.ttf",
+    ];
+  } else if (/[\u0C00-\u0C7F]/.test(fullQuestionsText)) {
+    fontName = "NotoSansTelugu";
+    fontFileName = "NotoSansTelugu-Regular.ttf";
+    fontUrls = [
+      "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansTelugu/NotoSansTelugu-Regular.ttf",
+      "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts/main/hinted/ttf/NotoSansTelugu/NotoSansTelugu-Regular.ttf",
+    ];
+  } else if (/[\u0C80-\u0CFF]/.test(fullQuestionsText)) {
+    fontName = "NotoSansKannada";
+    fontFileName = "NotoSansKannada-Regular.ttf";
+    fontUrls = [
+      "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansKannada/NotoSansKannada-Regular.ttf",
+      "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts/main/hinted/ttf/NotoSansKannada/NotoSansKannada-Regular.ttf",
+    ];
+  } else if (/[\u0D00-\u0D7F]/.test(fullQuestionsText)) {
+    fontName = "NotoSansMalayalam";
+    fontFileName = "NotoSansMalayalam-Regular.ttf";
+    fontUrls = [
+      "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansMalayalam/NotoSansMalayalam-Regular.ttf",
+      "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts/main/hinted/ttf/NotoSansMalayalam/NotoSansMalayalam-Regular.ttf",
+    ];
+  } else if (Array.from(fullQuestionsText).some((char) => char.charCodeAt(0) > 127)) {
+    fontName = "NotoSans";
+    fontFileName = "NotoSans-Regular.ttf";
+    fontUrls = [
+      "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSans/NotoSans-Regular.ttf",
+      "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts/main/hinted/ttf/NotoSans/NotoSans-Regular.ttf",
+    ];
+  }
+
+  const renderPdf = (base64Font?: string) => {
+    try {
+      const doc = new jsPDF({
+        orientation: "p",
+        unit: "pt",
+        format: "a4",
+        compress: true,
+      });
+
+      if (base64Font && fontFileName && fontName) {
+        doc.addFileToVFS(fontFileName, base64Font);
+        doc.addFont(fontFileName, fontName, "normal", "Identity-H");
+        doc.setFont(fontName, "normal");
+      }
+
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const marginX = 50;
+      const marginY = 50;
+      const contentWidth = pageWidth - marginX * 2;
+
+      let y = marginY;
+
+      const setFont = (bold: boolean = false) => {
+        if (fontName === "helvetica") {
+          doc.setFont("helvetica", bold ? "bold" : "normal");
+        } else {
+          doc.setFont(fontName, "normal");
+        }
+      };
+
+      const cleanQuestionText = (raw: string) => {
+        if (!raw) return "";
+        let text = raw.trim();
+        text = text.replace(/^(?:Q|Question|Q\s*No)?\s*\d*\s*[-.:)]\s*/i, "").trim();
+        text = text.replace(/^Q\d+\s*/i, "").trim();
+        return text;
+      };
+
+      const cleanOptionText = (opt: string) => {
+        if (!opt) return "";
+        return opt.trim().replace(/^[A-D][\.\)\:\-]\s*/i, "").trim();
+      };
+
+      const qFontSize = 14;
+      const optFontSize = 12;
+      const qLineHeight = 18;
+      const optLineHeight = 16;
+
+      questionsList.forEach((m, idx) => {
+        const rawQuestion = cleanQuestionText(m.question);
+        const questionStr = `${idx + 1}. ${rawQuestion}`;
+
+        const opts = m.options || ["", "", "", ""];
+        const optAStr = `A) ${cleanOptionText(opts[0])}`;
+        const optBStr = `B) ${cleanOptionText(opts[1])}`;
+        const optCStr = `C) ${cleanOptionText(opts[2])}`;
+        const optDStr = `D) ${cleanOptionText(opts[3])}`;
+
+        const cleanCorrect = cleanOptionText(m.correctAnswer || "");
+        const ansIndex = opts.findIndex(
+          (o) => cleanOptionText(o) === cleanCorrect || o === m.correctAnswer
+        );
+        const ansLetter = ansIndex !== -1 ? String.fromCharCode(65 + ansIndex) : "A";
+        const cleanAnsContent = ansIndex !== -1 ? cleanOptionText(opts[ansIndex]) : cleanCorrect;
+        const answerStr = `${ansLetter}) ${cleanAnsContent}`;
+
+        const expText = includeExplanations ? (m.explanation || "").trim() : "";
+
+        // Wrap lines cleanly using exact raw UTF-8 Unicode
+        setFont(true);
+        doc.setFontSize(qFontSize);
+        const questionLines = doc.splitTextToSize(questionStr, contentWidth) as string[];
+
+        setFont(false);
+        doc.setFontSize(optFontSize);
+        const optALines = doc.splitTextToSize(optAStr, contentWidth) as string[];
+        const optBLines = doc.splitTextToSize(optBStr, contentWidth) as string[];
+        const optCLines = doc.splitTextToSize(optCStr, contentWidth) as string[];
+        const optDLines = doc.splitTextToSize(optDStr, contentWidth) as string[];
+
+        setFont(true);
+        const answerLines = doc.splitTextToSize(answerStr, contentWidth) as string[];
+
+        setFont(false);
+        const explanationLines = expText ? (doc.splitTextToSize(expText, contentWidth) as string[]) : [];
+
+        // Calculate exact height of question block
+        let blockHeight = 0;
+        blockHeight += questionLines.length * qLineHeight + 10;
+        blockHeight += optALines.length * optLineHeight + 6;
+        blockHeight += optBLines.length * optLineHeight + 6;
+        blockHeight += optCLines.length * optLineHeight + 6;
+        blockHeight += optDLines.length * optLineHeight + 10;
+        blockHeight += optLineHeight + 4; // "Answer:" label
+        blockHeight += answerLines.length * optLineHeight;
+
+        if (expText) {
+          blockHeight += 10;
+          blockHeight += optLineHeight + 4; // "Explanation:" label
+          blockHeight += explanationLines.length * optLineHeight;
+        }
+
+        blockHeight += 20; // 20px gap after Answer (or Explanation) before next Question
+
+        // Pagination check
+        if (y + blockHeight > pageHeight - marginY && y > marginY) {
+          doc.addPage();
+          if (base64Font && fontFileName && fontName) {
+            doc.setFont(fontName, "normal");
+          }
+          y = marginY;
+        }
+
+        // Draw Question
+        setFont(true);
+        doc.setFontSize(qFontSize);
+        questionLines.forEach((line) => {
+          doc.text(line, marginX, y);
+          y += qLineHeight;
+        });
+        y += 10;
+
+        // Draw Options
+        setFont(false);
+        doc.setFontSize(optFontSize);
+
+        optALines.forEach((line) => {
+          doc.text(line, marginX, y);
+          y += optLineHeight;
+        });
+        y += 6;
+
+        optBLines.forEach((line) => {
+          doc.text(line, marginX, y);
+          y += optLineHeight;
+        });
+        y += 6;
+
+        optCLines.forEach((line) => {
+          doc.text(line, marginX, y);
+          y += optLineHeight;
+        });
+        y += 6;
+
+        optDLines.forEach((line) => {
+          doc.text(line, marginX, y);
+          y += optLineHeight;
+        });
+        y += 10;
+
+        // Draw Answer
+        setFont(true);
+        doc.setFontSize(optFontSize);
+        doc.text("Answer:", marginX, y);
+        y += optLineHeight + 4;
+
+        setFont(false);
+        answerLines.forEach((line) => {
+          doc.text(line, marginX, y);
+          y += optLineHeight;
+        });
+
+        // Draw Explanation
+        if (expText) {
+          y += 10;
+          setFont(true);
+          doc.text("Explanation:", marginX, y);
+          y += optLineHeight + 4;
+
+          setFont(false);
+          explanationLines.forEach((line) => {
+            doc.text(line, marginX, y);
+            y += optLineHeight;
+          });
+        }
+
+        // 20px Spacing
+        y += 20;
+      });
+
+      const cleanName = pdfName.replace(".pdf", "").replace(/\s+/g, "_");
+      doc.save(`${cleanName}_MCQs.pdf`);
+      if (onSuccess) onSuccess();
+      toast.success("PDF document downloaded successfully!");
+    } catch (err) {
+      console.error("PDF generation failed:", err);
+      toast.error("PDF generation failed. Try downloading again.");
+    }
+  };
+
+  if (fontUrls.length > 0) {
+    const toastId = toast.loading(`Loading font for PDF generation...`);
+
+    const fetchFont = async () => {
+      for (const url of fontUrls) {
+        try {
+          const res = await fetch(url);
+          if (!res.ok) continue;
+          const arrayBuffer = await res.arrayBuffer();
+          let binary = "";
+          const bytes = new Uint8Array(arrayBuffer);
+          const len = bytes.byteLength;
+          for (let i = 0; i < len; i++) {
+            binary += String.fromCharCode(bytes[i]);
+          }
+          return window.btoa(binary);
+        } catch {
+          // try next URL
+        }
+      }
+      return null;
+    };
+
+    fetchFont().then((base64Font) => {
+      toast.dismiss(toastId);
+      if (base64Font) {
+        toast.success("Unicode font loaded!");
+        renderPdf(base64Font);
+      } else {
+        toast.error("Failed to load Unicode font. Generating PDF with default font.");
+        renderPdf();
+      }
+    });
+  } else {
+    renderPdf();
+  }
+};
+
 
 type DashboardStats = {
   uploadedPdfs: number;
@@ -618,285 +923,10 @@ function App() {
 
   // Central Download Functions for shared use
   const handleDownloadPdf = (pdfName: string, questions: MCQ[]) => {
-    const fullQuestionsText =
-      pdfName +
-      " " +
-      questions.map((m) => m.question + " " + m.options.join(" ") + " " + m.correctAnswer).join(" ");
-
-    let fontName = "helvetica";
-    let fontUrl = "";
-    let fontFileName = "";
-
-    if (/[\u0B80-\u0BFF]/.test(fullQuestionsText)) {
-      fontName = "NotoSansTamil";
-      fontFileName = "NotoSansTamil-Regular.ttf";
-      fontUrl =
-        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansTamil/NotoSansTamil-Regular.ttf";
-    } else if (/[\u0900-\u097F]/.test(fullQuestionsText)) {
-      fontName = "NotoSansDevanagari";
-      fontFileName = "NotoSansDevanagari-Regular.ttf";
-      fontUrl =
-        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Regular.ttf";
-    } else if (/[\u0C00-\u0C7F]/.test(fullQuestionsText)) {
-      fontName = "NotoSansTelugu";
-      fontFileName = "NotoSansTelugu-Regular.ttf";
-      fontUrl =
-        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansTelugu/NotoSansTelugu-Regular.ttf";
-    } else if (/[\u0C80-\u0CFF]/.test(fullQuestionsText)) {
-      fontName = "NotoSansKannada";
-      fontFileName = "NotoSansKannada-Regular.ttf";
-      fontUrl =
-        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansKannada/NotoSansKannada-Regular.ttf";
-    } else if (/[\u0D00-\u0D7F]/.test(fullQuestionsText)) {
-      fontName = "NotoSansMalayalam";
-      fontFileName = "NotoSansMalayalam-Regular.ttf";
-      fontUrl =
-        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansMalayalam/NotoSansMalayalam-Regular.ttf";
-    } else if (Array.from(fullQuestionsText).some((char) => char.charCodeAt(0) > 127)) {
-      fontName = "NotoSans";
-      fontFileName = "NotoSans-Regular.ttf";
-      fontUrl =
-        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSans/NotoSans-Regular.ttf";
-    }
-
-    const generateAndSave = (base64Font?: string) => {
-      try {
-        const doc = new jsPDF({
-          orientation: "p",
-          unit: "pt",
-          format: "a4",
-          compress: true,
-        });
-
-        if (base64Font && fontFileName && fontName) {
-          doc.addFileToVFS(fontFileName, base64Font);
-          doc.addFont(fontFileName, fontName, "normal", "Identity-H");
-          doc.setFont(fontName, "normal");
-        }
-
-        const pageWidth = doc.internal.pageSize.getWidth();
-        const pageHeight = doc.internal.pageSize.getHeight();
-        const marginX = 51.0;
-        const marginY = 56.7;
-        const contentWidth = pageWidth - marginX * 2;
-
-        let y = marginY;
-
-        const setSafeFont = (style: "normal" | "bold" | "italic" | "bolditalic") => {
-          if (fontName === "helvetica") {
-            doc.setFont("helvetica", style);
-          } else {
-            doc.setFont(fontName, "normal");
-          }
-        };
-
-        const shapeIndicText = (text: string) => {
-          let shaped = text;
-          shaped = shaped.replace(/([க-ஹ])\u0BC6/g, "\u0BC6$1");
-          shaped = shaped.replace(/([க-ஹ])\u0BC7/g, "\u0BC7$1");
-          shaped = shaped.replace(/([க-ஹ])\u0BC8/g, "\u0BC8$1");
-          shaped = shaped.replace(/([க-ஹ])\u0BCA/g, "\u0BC6$1\u0BBE");
-          shaped = shaped.replace(/([க-ஹ])\u0BCB/g, "\u0BC7$1\u0BBE");
-          shaped = shaped.replace(/([க-ஹ])\u0BCC/g, "\u0BC6$1\u0BD7");
-          shaped = shaped.replace(/([क-ह])\u093F/g, "\u093F$1");
-          shaped = shaped.replace(/([ക-ഹ])\u0D46/g, "\u0D46$1");
-          shaped = shaped.replace(/([ക-ഹ])\u0D47/g, "\u0D47$1");
-          shaped = shaped.replace(/([ക-ഹ])\u0D48/g, "\u0D48$1");
-          shaped = shaped.replace(/([ക-ഹ])\u0D4A/g, "\u0D46$1\u0D3E");
-          shaped = shaped.replace(/([ക-ഹ])\u0D4B/g, "\u0D47$1\u0D3E");
-          return shaped;
-        };
-
-        const drawShapedText = (text: string, tx: number, ty: number) => {
-          if (fontName !== "NotoSansTamil") {
-            doc.text(text, tx, ty);
-            return;
-          }
-          let currentX = tx;
-          const fontSize = doc.getFontSize();
-          const pulliRadius = fontSize * 0.055;
-          const pulliYOffset = fontSize * 0.65;
-          for (let i = 0; i < text.length; i++) {
-            const char = text[i];
-            const nextChar = text[i + 1];
-            if (char === "\u0BCD") continue;
-            doc.text(char, currentX, ty);
-            const charWidth = doc.getTextWidth(char);
-            const centerX = currentX + charWidth / 2;
-            if (nextChar === "\u0BCD") {
-              doc.setFillColor(0, 0, 0);
-              doc.circle(centerX, ty - pulliYOffset, pulliRadius, "F");
-            }
-            if (nextChar === "\u0BC1" || nextChar === "\u0BC2") {
-              const shiftAmount = charWidth * 0.52;
-              const vowelX = currentX + charWidth - shiftAmount;
-              doc.text(nextChar, vowelX, ty);
-              i++;
-            }
-            currentX += charWidth;
-          }
-        };
-
-        const wrapAndShape = (text: string, maxWidth: number): string[] => {
-          const rawLines = doc.splitTextToSize(text, maxWidth) as string[];
-          return rawLines.map((line) => (fontName !== "helvetica" ? shapeIndicText(line) : line));
-        };
-
-        // Header
-        setSafeFont("bold");
-        doc.setFontSize(18);
-        doc.text(`Extracted ${questions.length} Questions`, marginX, y);
-        y += 25;
-
-        doc.setFontSize(10);
-        setSafeFont("normal");
-        const shapedPdfName = fontName !== "helvetica" ? shapeIndicText(pdfName) : pdfName;
-        doc.text(`Source Document: ${shapedPdfName}`, marginX, y);
-        y += 30;
-
-        questions.forEach((m, idx) => {
-          const cleanQuestion = m.question
-            .replace(/^\s*(?:Q|Question|Q\s*No)(?:\.|\s+No\.?|\s+No)?\s*\d+\s*[-.):]?\s*/i, "")
-            .replace(/^\s*Q\s*[-.):]\s*/i, "");
-          const qText = cleanQuestion;
-          const optTexts = m.options;
-          const ansText = m.correctAnswer;
-          const expText = m.explanation || "";
-
-          const questionLines = wrapAndShape(qText, contentWidth);
-          const optALines = wrapAndShape(`A. ${optTexts[0]}`, contentWidth);
-          const optBLines = wrapAndShape(`B. ${optTexts[1]}`, contentWidth);
-          const optCLines = wrapAndShape(`C. ${optTexts[2]}`, contentWidth);
-          const optDLines = wrapAndShape(`D. ${optTexts[3]}`, contentWidth);
-
-          const ansIndex = optTexts.indexOf(ansText);
-          const ansLetter = ansIndex !== -1 ? String.fromCharCode(65 + ansIndex) : "A";
-          const answerLines = wrapAndShape(`${ansLetter}. ${ansText}`, contentWidth);
-          const explanationLines = expText ? wrapAndShape(expText, contentWidth) : [];
-
-          let blockHeight = 0;
-          blockHeight += 15;
-          blockHeight += 28.8 + 10;
-          blockHeight += questionLines.length * 28.8 + 10;
-          blockHeight += optALines.length * 25.6 + 10;
-          blockHeight += optBLines.length * 25.6 + 10;
-          blockHeight += optCLines.length * 25.6 + 10;
-          blockHeight += optDLines.length * 25.6;
-          blockHeight += 10;
-          blockHeight += 25.6 + 10;
-          blockHeight += answerLines.length * 25.6;
-
-          if (expText) {
-            blockHeight += 10;
-            blockHeight += 24.0 + 10;
-            blockHeight += explanationLines.length * 24.0;
-          }
-          blockHeight += 20;
-
-          if (y + blockHeight > pageHeight - marginY) {
-            doc.addPage();
-            if (base64Font && fontFileName && fontName) {
-              doc.setFont(fontName, "normal");
-            }
-            y = marginY + 15;
-          }
-
-          doc.setDrawColor(220);
-          doc.setLineDashPattern([2, 2], 0);
-          doc.line(marginX, y, pageWidth - marginX, y);
-          y += 15;
-
-          doc.setFontSize(18);
-          setSafeFont("bold");
-          drawShapedText(`${idx + 1}.`, marginX, y);
-          y += 28.8 + 10;
-
-          setSafeFont("bold");
-          questionLines.forEach((line) => {
-            drawShapedText(line, marginX, y);
-            y += 28.8;
-          });
-          y += 10;
-
-          doc.setFontSize(16);
-          setSafeFont("normal");
-          const drawOptionGroup = (lines: string[], addGap: boolean) => {
-            lines.forEach((line) => {
-              drawShapedText(line, marginX, y);
-              y += 25.6;
-            });
-            if (addGap) y += 10;
-          };
-
-          drawOptionGroup(optALines, true);
-          drawOptionGroup(optBLines, true);
-          drawOptionGroup(optCLines, true);
-          drawOptionGroup(optDLines, false);
-          y += 10;
-
-          doc.setFontSize(16);
-          setSafeFont("bold");
-          drawShapedText("Answer:", marginX, y);
-          y += 25.6 + 10;
-
-          answerLines.forEach((line) => {
-            drawShapedText(line, marginX, y);
-            y += 25.6;
-          });
-
-          if (expText) {
-            y += 10;
-            doc.setFontSize(15);
-            setSafeFont("bolditalic");
-            drawShapedText("Explanation:", marginX, y);
-            y += 24.0 + 10;
-
-            setSafeFont("italic");
-            explanationLines.forEach((line) => {
-              drawShapedText(line, marginX, y);
-              y += 24.0;
-            });
-          }
-          y += 20;
-        });
-
-        const cleanName = pdfName.replace(".pdf", "").replace(/\s+/g, "_");
-        doc.save(`${cleanName}_MCQs.pdf`);
-        updateStats((prev) => ({ ...prev, downloadHistoryCount: prev.downloadHistoryCount + 1 }));
-        logActivity("download", `Downloaded PDF quiz from "${pdfName}"`);
-        toast.success("PDF document downloaded successfully!");
-      } catch (err) {
-        console.error("PDF generation failed:", err);
-        toast.error("PDF generation failed.");
-      }
-    };
-
-    if (fontUrl) {
-      const toastId = toast.loading(`Downloading Unicode font (${fontName}) to render PDF...`);
-      fetch(fontUrl)
-        .then((res) => {
-          if (!res.ok) throw new Error("Font fetch failed");
-          return res.arrayBuffer();
-        })
-        .then((arrayBuffer) => {
-          let text = "";
-          const bytes = new Uint8Array(arrayBuffer);
-          const len = bytes.byteLength;
-          for (let i = 0; i < len; i++) {
-            text += String.fromCharCode(bytes[i]);
-          }
-          const base64 = window.btoa(text);
-          toast.dismiss(toastId);
-          generateAndSave(base64);
-        })
-        .catch((err) => {
-          toast.dismiss(toastId);
-          toast.error("Failed to load Unicode font. Generating default PDF.");
-          generateAndSave();
-        });
-    } else {
-      generateAndSave();
-    }
+    generateExamPdf(pdfName, questions, true, () => {
+      updateStats((prev) => ({ ...prev, downloadHistoryCount: prev.downloadHistoryCount + 1 }));
+      logActivity("download", `Downloaded PDF quiz from "${pdfName}"`);
+    });
   };
 
   const handleDownloadWord = async (pdfName: string, questions: MCQ[]) => {
@@ -3344,316 +3374,13 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
   // ==========================================
   // EXPORT PDF (.pdf) - Custom Exam Paper formatting
   // ==========================================
-  // Helper for Indic script reordering (shaping)
-  const shapeIndicText = (text: string) => {
-    let shaped = text;
-
-    // 1. Tamil shaping
-    shaped = shaped.replace(/([க-ஹ])\u0BC6/g, "\u0BC6$1"); // ெ
-    shaped = shaped.replace(/([க-ஹ])\u0BC7/g, "\u0BC7$1"); // ே
-    shaped = shaped.replace(/([க-ஹ])\u0BC8/g, "\u0BC8$1"); // ை
-    shaped = shaped.replace(/([க-ஹ])\u0BCA/g, "\u0BC6$1\u0BBE"); // ொ -> ெ + consonant + ா
-    shaped = shaped.replace(/([க-ஹ])\u0BCB/g, "\u0BC7$1\u0BBE"); // ோ -> ே + consonant + ா
-    shaped = shaped.replace(/([க-ஹ])\u0BCC/g, "\u0BC6$1\u0BD7"); // ௌ -> ெ + consonant + ள-sign
-
-    // 2. Devanagari (Hindi) shaping
-    shaped = shaped.replace(/([क-ह])\u093F/g, "\u093F$1"); // ि
-    shaped = shaped.replace(/([ക-ഹ])\u0D46/g, "\u0D46$1"); // െ
-    shaped = shaped.replace(/([ക-ഹ])\u0D47/g, "\u0D47$1"); // േ
-    shaped = shaped.replace(/([ക-ഹ])\u0D48/g, "\u0D48$1"); // ൈ
-    shaped = shaped.replace(/([ക-ഹ])\u0D4A/g, "\u0D46$1\u0D3E"); // ൊ
-    shaped = shaped.replace(/([ക-ഹ])\u0D4B/g, "\u0D47$1\u0D3E"); // ോ
-
-    return shaped;
-  };
-
   const downloadPdf = () => {
     const list = mcqs.filter((_, idx) => selectedIndices.has(idx));
     if (list.length === 0) {
       toast.error("Please select at least one question to download.");
       return;
     }
-
-    const fullQuestionsText =
-      pdfName +
-      " " +
-      list.map((m) => m.question + " " + m.options.join(" ") + " " + m.correctAnswer).join(" ");
-
-    let fontName = "helvetica";
-    let fontUrl = "";
-    let fontFileName = "";
-
-    if (/[\u0B80-\u0BFF]/.test(fullQuestionsText)) {
-      fontName = "NotoSansTamil";
-      fontFileName = "NotoSansTamil-Regular.ttf";
-      fontUrl =
-        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansTamil/NotoSansTamil-Regular.ttf";
-    } else if (/[\u0900-\u097F]/.test(fullQuestionsText)) {
-      fontName = "NotoSansDevanagari";
-      fontFileName = "NotoSansDevanagari-Regular.ttf";
-      fontUrl =
-        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Regular.ttf";
-    } else if (/[\u0C00-\u0C7F]/.test(fullQuestionsText)) {
-      fontName = "NotoSansTelugu";
-      fontFileName = "NotoSansTelugu-Regular.ttf";
-      fontUrl =
-        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansTelugu/NotoSansTelugu-Regular.ttf";
-    } else if (/[\u0C80-\u0CFF]/.test(fullQuestionsText)) {
-      fontName = "NotoSansKannada";
-      fontFileName = "NotoSansKannada-Regular.ttf";
-      fontUrl =
-        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansKannada/NotoSansKannada-Regular.ttf";
-    } else if (/[\u0D00-\u0D7F]/.test(fullQuestionsText)) {
-      fontName = "NotoSansMalayalam";
-      fontFileName = "NotoSansMalayalam-Regular.ttf";
-      fontUrl =
-        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansMalayalam/NotoSansMalayalam-Regular.ttf";
-    } else if (Array.from(fullQuestionsText).some((char) => char.charCodeAt(0) > 127)) {
-      fontName = "NotoSans";
-      fontFileName = "NotoSans-Regular.ttf";
-      fontUrl =
-        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSans/NotoSans-Regular.ttf";
-    }
-
-    const generateAndSave = (base64Font?: string) => {
-      try {
-        const doc = new jsPDF({
-          orientation: "p",
-          unit: "pt",
-          format: "a4",
-          compress: true,
-        });
-
-        if (base64Font && fontFileName && fontName) {
-          doc.addFileToVFS(fontFileName, base64Font);
-          doc.addFont(fontFileName, fontName, "normal", "Identity-H");
-          doc.setFont(fontName, "normal");
-        }
-
-        const pageWidth = doc.internal.pageSize.getWidth();
-        const pageHeight = doc.internal.pageSize.getHeight();
-
-        // Margins: Top/Bottom 20mm (~56.7pt), Left/Right 20mm (~56.7pt)
-        const marginX = 56.7;
-        const marginY = 56.7;
-        const contentWidth = pageWidth - marginX * 2;
-
-        let y = marginY;
-
-        const setSafeFont = (style: "normal" | "bold" | "italic" | "bolditalic") => {
-          if (fontName === "helvetica") {
-            doc.setFont("helvetica", style);
-          } else {
-            doc.setFont(fontName, "normal");
-          }
-        };
-
-        // Custom shaper renderer for complex Indic languages (Tamil, Malayalam, Hindi)
-        const drawShapedText = (text: string, tx: number, ty: number) => {
-          if (fontName !== "NotoSansTamil") {
-            doc.text(text, tx, ty);
-            return;
-          }
-
-          let currentX = tx;
-          const fontSize = doc.getFontSize();
-          const pulliRadius = fontSize * 0.055;
-          const pulliYOffset = fontSize * 0.65;
-
-          for (let i = 0; i < text.length; i++) {
-            const char = text[i];
-            const nextChar = text[i + 1];
-
-            if (char === "\u0BCD") {
-              continue;
-            }
-
-            // Draw current base character
-            doc.text(char, currentX, ty);
-            const charWidth = doc.getTextWidth(char);
-            const centerX = currentX + charWidth / 2;
-
-            // Draw pulli dot as vector circle
-            if (nextChar === "\u0BCD") {
-              doc.setFillColor(0, 0, 0);
-              doc.circle(centerX, ty - pulliYOffset, pulliRadius, "F");
-            }
-
-            // Draw u or oo vowel sign shifted left to attach to consonant
-            if (nextChar === "\u0BC1" || nextChar === "\u0BC2") {
-              const shiftAmount = charWidth * 0.52;
-              const vowelX = currentX + charWidth - shiftAmount;
-              doc.text(nextChar, vowelX, ty);
-              i++; // skip vowel character
-            }
-
-            currentX += charWidth;
-          }
-        };
-
-        // Wrap and shape helper to prevent splitting vowel signs across lines
-        const wrapAndShape = (text: string, maxWidth: number): string[] => {
-          const rawLines = doc.splitTextToSize(text, maxWidth) as string[];
-          return rawLines.map((line) => (fontName !== "helvetica" ? shapeIndicText(line) : line));
-        };
-
-        const separatorLineStr = "------------------------------------------------";
-
-        // Draw top separator at the very beginning of first page
-        doc.setFontSize(16);
-        setSafeFont("normal");
-        drawShapedText(separatorLineStr, marginX, y);
-        y += 25.6 + 24;
-
-        list.forEach((m, idx) => {
-          const cleanQuestion = m.question
-            .replace(/^\s*(?:Q|Question|Q\s*No)(?:\.|\s+No\.?|\s+No)?\s*\d+\s*[-.):]?\s*/i, "")
-            .replace(/^\s*Q\s*[-.):]\s*/i, "");
-          // Prepare content lines
-          const qText = `${idx + 1}. ${cleanQuestion}`;
-          const optTexts = m.options;
-          const ansText = m.correctAnswer;
-          const expText = m.explanation || "";
-
-          // Wrap questions and options
-          const questionLines = wrapAndShape(qText, contentWidth);
-          const optALines = wrapAndShape(`A) ${optTexts[0]}`, contentWidth);
-          const optBLines = wrapAndShape(`B) ${optTexts[1]}`, contentWidth);
-          const optCLines = wrapAndShape(`C) ${optTexts[2]}`, contentWidth);
-          const optDLines = wrapAndShape(`D) ${optTexts[3]}`, contentWidth);
-
-          const ansIndex = optTexts.indexOf(ansText);
-          const ansLetter = ansIndex !== -1 ? String.fromCharCode(65 + ansIndex) : "A";
-          const answerLines = wrapAndShape(`${ansLetter}) ${ansText}`, contentWidth);
-
-          const explanationLines = (showExplanations && expText) ? wrapAndShape(expText, contentWidth) : [];
-
-          // Calculate precise block height for pagination
-          let blockHeight = 0;
-          blockHeight += questionLines.length * 28.8 + 10; // Question Text (18pt * 1.6) + Paragraph Gap
-          blockHeight += optALines.length * 25.6 + 10; // Option A (16pt * 1.6) + Paragraph Gap
-          blockHeight += optBLines.length * 25.6 + 10; // Option B (16pt * 1.6) + Paragraph Gap
-          blockHeight += optCLines.length * 25.6 + 10; // Option C (16pt * 1.6) + Paragraph Gap
-          blockHeight += optDLines.length * 25.6 + 10; // Option D (16pt * 1.6) + Paragraph Gap
-          blockHeight += 25.6; // "Answer:" Label (16pt * 1.6)
-          blockHeight += answerLines.length * 25.6; // Answer Text (16pt * 1.6)
-          if (showExplanations && expText) {
-            blockHeight += 10; // Paragraph Gap
-            blockHeight += 25.6; // "Explanation:" Label
-            blockHeight += explanationLines.length * 25.6; // Explanation Text
-          }
-          blockHeight += 24; // Question Gap (before separator)
-          blockHeight += 25.6; // Separator height
-
-          // Page break check (prevents splitting a question block across pages)
-          if (y + blockHeight > pageHeight - marginY) {
-            doc.addPage();
-            if (base64Font && fontFileName && fontName) {
-              doc.setFont(fontName, "normal");
-            }
-            y = marginY;
-          }
-
-          // Question Number + Text - 18px (18pt) Bold
-          doc.setFontSize(18);
-          setSafeFont("bold");
-          questionLines.forEach((line) => {
-            drawShapedText(line, marginX, y);
-            y += 28.8;
-          });
-          y += 10; // Paragraph Gap
-
-          // Options - 16px (16pt) Regular
-          doc.setFontSize(16);
-          setSafeFont("normal");
-          const drawOptionGroup = (lines: string[]) => {
-            lines.forEach((line) => {
-              drawShapedText(line, marginX, y);
-              y += 25.6;
-            });
-            y += 10; // Paragraph Gap
-          };
-
-          drawOptionGroup(optALines);
-          drawOptionGroup(optBLines);
-          drawOptionGroup(optCLines);
-          drawOptionGroup(optDLines);
-
-          // Answer Label - 16px Bold
-          setSafeFont("bold");
-          drawShapedText("Answer:", marginX, y);
-          y += 25.6; // No gap immediately below
-
-          // Answer Text - 16px Bold
-          answerLines.forEach((line) => {
-            drawShapedText(line, marginX, y);
-            y += 25.6;
-          });
-
-          // Explanation (if enabled)
-          if (showExplanations && expText) {
-            y += 10; // Paragraph Gap
-            setSafeFont("bold");
-            drawShapedText("Explanation:", marginX, y);
-            y += 25.6;
-
-            setSafeFont("normal");
-            explanationLines.forEach((line) => {
-              drawShapedText(line, marginX, y);
-              y += 25.6;
-            });
-          }
-
-          // Render bottom separator
-          y += 24; // Question Gap
-          doc.setFontSize(16);
-          setSafeFont("normal");
-          drawShapedText(separatorLineStr, marginX, y);
-          y += 25.6;
-          y += 24; // Question Gap (for the next question)
-        });
-
-        // Save file with original name prefix + _MCQs.pdf
-        const cleanName = pdfName.replace(".pdf", "").replace(/\s+/g, "_");
-        doc.save(`${cleanName}_MCQs.pdf`);
-        onDownload();
-        toast.success("PDF document downloaded successfully!");
-      } catch (err) {
-        console.error("PDF generation failed:", err);
-        toast.error("PDF generation failed. Try downloading again.");
-      }
-    };
-
-    if (fontUrl) {
-      const toastId = toast.loading(
-        `Downloading Unicode font (${fontName}) to render PDF correctly...`,
-      );
-      fetch(fontUrl)
-        .then((res) => {
-          if (!res.ok) throw new Error("Font fetch failed");
-          return res.arrayBuffer();
-        })
-        .then((arrayBuffer) => {
-          let binary = "";
-          const bytes = new Uint8Array(arrayBuffer);
-          const len = bytes.byteLength;
-          for (let i = 0; i < len; i++) {
-            binary += String.fromCharCode(bytes[i]);
-          }
-          const base64 = window.btoa(binary);
-          toast.dismiss(toastId);
-          toast.success("Unicode font loaded successfully!");
-          generateAndSave(base64);
-        })
-        .catch((err) => {
-          toast.dismiss(toastId);
-          console.error("Font loading error:", err);
-          toast.error("Failed to load Unicode font. Generating PDF with default font.");
-          generateAndSave();
-        });
-    } else {
-      generateAndSave();
-    }
+    generateExamPdf(pdfName, list, showExplanations, onDownload);
   };
 
   // Helper formatting for Clipboard
