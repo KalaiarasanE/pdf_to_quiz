@@ -111,6 +111,29 @@ type PdfMeta = {
   fileType?: "pdf" | "doc" | "docx";
 };
 
+// Helper utility functions for clean document formatting
+const cleanQuestionText = (raw: string) => {
+  if (!raw) return "";
+  let text = raw.trim();
+  text = text.replace(/^(?:Q|Question|Q\s*No)?\s*\d*\s*[-.:)]\s*/i, "").trim();
+  text = text.replace(/^Q\d+\s*/i, "").trim();
+  return text;
+};
+
+const cleanOptionText = (opt: string) => {
+  if (!opt) return "";
+  return opt.trim().replace(/^[A-D][\.\)\:\-]\s*/i, "").trim();
+};
+
+const getAnswerLetter = (correctAnswer: string, options: string[]) => {
+  if (!options || options.length === 0) return "A";
+  const cleanCorrect = cleanOptionText(correctAnswer || "");
+  const idx = options.findIndex(
+    (o) => cleanOptionText(o) === cleanCorrect || o === correctAnswer
+  );
+  return idx !== -1 ? String.fromCharCode(65 + idx) : "A";
+};
+
 // Shared PDF generator adhering strictly to clean exam paper format
 const generateExamPdf = (
   pdfName: string,
@@ -218,19 +241,6 @@ const generateExamPdf = (
         }
       };
 
-      const cleanQuestionText = (raw: string) => {
-        if (!raw) return "";
-        let text = raw.trim();
-        text = text.replace(/^(?:Q|Question|Q\s*No)?\s*\d*\s*[-.:)]\s*/i, "").trim();
-        text = text.replace(/^Q\d+\s*/i, "").trim();
-        return text;
-      };
-
-      const cleanOptionText = (opt: string) => {
-        if (!opt) return "";
-        return opt.trim().replace(/^[A-D][\.\)\:\-]\s*/i, "").trim();
-      };
-
       const qFontSize = 14;
       const optFontSize = 12;
       const qLineHeight = 18;
@@ -241,18 +251,13 @@ const generateExamPdf = (
         const questionStr = `${idx + 1}. ${rawQuestion}`;
 
         const opts = m.options || ["", "", "", ""];
-        const optAStr = `A) ${cleanOptionText(opts[0])}`;
-        const optBStr = `B) ${cleanOptionText(opts[1])}`;
-        const optCStr = `C) ${cleanOptionText(opts[2])}`;
-        const optDStr = `D) ${cleanOptionText(opts[3])}`;
+        const optAStr = `A. ${cleanOptionText(opts[0])}`;
+        const optBStr = `B. ${cleanOptionText(opts[1])}`;
+        const optCStr = `C. ${cleanOptionText(opts[2])}`;
+        const optDStr = `D. ${cleanOptionText(opts[3])}`;
 
-        const cleanCorrect = cleanOptionText(m.correctAnswer || "");
-        const ansIndex = opts.findIndex(
-          (o) => cleanOptionText(o) === cleanCorrect || o === m.correctAnswer
-        );
-        const ansLetter = ansIndex !== -1 ? String.fromCharCode(65 + ansIndex) : "A";
-        const cleanAnsContent = ansIndex !== -1 ? cleanOptionText(opts[ansIndex]) : cleanCorrect;
-        const answerStr = `${ansLetter}) ${cleanAnsContent}`;
+        const ansLetter = getAnswerLetter(m.correctAnswer || "", opts);
+        const answerStr = `Answer: ${ansLetter}`;
 
         const expText = includeExplanations ? (m.explanation || "").trim() : "";
 
@@ -281,7 +286,6 @@ const generateExamPdf = (
         blockHeight += optBLines.length * optLineHeight + 6;
         blockHeight += optCLines.length * optLineHeight + 6;
         blockHeight += optDLines.length * optLineHeight + 10;
-        blockHeight += optLineHeight + 4; // "Answer:" label
         blockHeight += answerLines.length * optLineHeight;
 
         if (expText) {
@@ -341,10 +345,6 @@ const generateExamPdf = (
         // Draw Answer
         setFont(true);
         doc.setFontSize(optFontSize);
-        doc.text("Answer:", marginX, y);
-        y += optLineHeight + 4;
-
-        setFont(false);
         answerLines.forEach((line) => {
           doc.text(line, marginX, y);
           y += optLineHeight;
@@ -368,7 +368,7 @@ const generateExamPdf = (
         y += 20;
       });
 
-      const cleanName = pdfName.replace(".pdf", "").replace(/\s+/g, "_");
+      const cleanName = pdfName.replace(/\.(pdf|docx?)$/i, "").replace(/\s+/g, "_");
       doc.save(`${cleanName}_MCQs.pdf`);
       if (onSuccess) onSuccess();
       toast.success("PDF document downloaded successfully!");
@@ -413,6 +413,109 @@ const generateExamPdf = (
     });
   } else {
     renderPdf();
+  }
+};
+
+// Shared Microsoft Word (.docx) generator adhering strictly to clean exam paper format
+const generateWordDocument = async (
+  pdfName: string,
+  questionsList: MCQ[],
+  includeExplanations: boolean = true,
+  onSuccess?: () => void
+) => {
+  if (!questionsList || questionsList.length === 0) {
+    toast.error("Please select at least one question to download.");
+    return;
+  }
+
+  try {
+    const doc = new Document({
+      sections: [
+        {
+          properties: {},
+          children: questionsList.flatMap((m, idx) => {
+            const rawQuestion = cleanQuestionText(m.question);
+            const opts = m.options || ["", "", "", ""];
+            const ansLetter = getAnswerLetter(m.correctAnswer || "", opts);
+            const expText = includeExplanations ? (m.explanation || "").trim() : "";
+
+            const children: Paragraph[] = [
+              // Question paragraph
+              new Paragraph({
+                children: [
+                  new TextRun({
+                    text: `${idx + 1}. ${rawQuestion}`,
+                    bold: true,
+                    size: 28, // 14pt
+                  }),
+                ],
+                spacing: { before: idx === 0 ? 0 : 300, after: 120 },
+              }),
+              // Options A., B., C., D.
+              ...opts.map(
+                (opt, oi) =>
+                  new Paragraph({
+                    children: [
+                      new TextRun({
+                        text: `${String.fromCharCode(65 + oi)}. ${cleanOptionText(opt)}`,
+                        size: 24, // 12pt
+                      }),
+                    ],
+                    spacing: { after: 80 },
+                  })
+              ),
+              // Answer
+              new Paragraph({
+                children: [
+                  new TextRun({
+                    text: `Answer: `,
+                    bold: true,
+                    size: 24, // 12pt
+                  }),
+                  new TextRun({
+                    text: ansLetter,
+                    bold: true,
+                    size: 24, // 12pt
+                  }),
+                ],
+                spacing: { before: 120, after: expText ? 80 : 300 },
+              }),
+            ];
+
+            if (expText) {
+              children.push(
+                new Paragraph({
+                  children: [
+                    new TextRun({
+                      text: `Explanation: `,
+                      bold: true,
+                      size: 24,
+                    }),
+                    new TextRun({
+                      text: expText,
+                      italics: true,
+                      size: 24,
+                    }),
+                  ],
+                  spacing: { after: 300 },
+                })
+              );
+            }
+
+            return children;
+          }),
+        },
+      ],
+    });
+
+    const blob = await Packer.toBlob(doc);
+    const cleanName = pdfName.replace(/\.(pdf|docx?)$/i, "").replace(/\s+/g, "_");
+    saveAs(blob, `${cleanName}_MCQs.docx`);
+    if (onSuccess) onSuccess();
+    toast.success("Word document (.docx) downloaded successfully!");
+  } catch (err) {
+    console.error("Word generation failed:", err);
+    toast.error("Word document generation failed.");
   }
 };
 
@@ -992,69 +1095,11 @@ function App() {
     });
   };
 
-  const handleDownloadWord = async (pdfName: string, questions: MCQ[]) => {
-    const doc = new Document({
-      sections: [
-        {
-          children: [
-            new Paragraph({
-              children: [
-                new TextRun({
-                  text: `Extracted ${questions.length} Questions`,
-                  bold: true,
-                  size: 32,
-                }),
-              ],
-              spacing: { after: 200 },
-            }),
-            ...questions.flatMap((m, idx) => [
-              new Paragraph({
-                text: "------------------------------------------------",
-                spacing: { before: 100, after: 100 },
-              }),
-              new Paragraph({
-                children: [
-                  new TextRun({
-                    text: `Q${idx + 1}`,
-                    bold: true,
-                  }),
-                ],
-              }),
-              new Paragraph({
-                text: m.question,
-                spacing: { after: 120 },
-              }),
-              ...m.options.map(
-                (opt, oi) =>
-                  new Paragraph({
-                    text: `${String.fromCharCode(65 + oi)}. ${opt}`,
-                    spacing: { after: 60 },
-                  }),
-              ),
-              new Paragraph({
-                children: [
-                  new TextRun({
-                    text: "Answer:",
-                    bold: true,
-                  }),
-                ],
-                spacing: { before: 100 },
-              }),
-              new Paragraph({
-                text: `${String.fromCharCode(65 + m.options.indexOf(m.correctAnswer))}. ${m.correctAnswer}`,
-                spacing: { after: 150 },
-              }),
-            ]),
-          ],
-        },
-      ],
+  const handleDownloadWord = (pdfName: string, questions: MCQ[]) => {
+    generateWordDocument(pdfName, questions, true, () => {
+      updateStats((prev) => ({ ...prev, downloadHistoryCount: prev.downloadHistoryCount + 1 }));
+      logActivity("download", `Downloaded DOCX quiz from "${pdfName}"`);
     });
-
-    const blob = await Packer.toBlob(doc);
-    saveAs(blob, `${pdfName.replace(".pdf", "")}_quiz.docx`);
-    updateStats((prev) => ({ ...prev, downloadHistoryCount: prev.downloadHistoryCount + 1 }));
-    logActivity("download", `Downloaded DOCX quiz from "${pdfName}"`);
-    toast.success("Word document (.docx) download started.");
   };
 
   // Central File processing handler
@@ -3390,69 +3435,7 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
       toast.error("Please select at least one question to download.");
       return;
     }
-
-    const doc = new Document({
-      sections: [
-        {
-          properties: {},
-          children: [
-            new Paragraph({
-              children: [
-                new TextRun({
-                  text: `Extracted ${list.length} Questions`,
-                  bold: true,
-                  size: 32,
-                }),
-              ],
-              spacing: { after: 200 },
-            }),
-            ...list.flatMap((m, idx) => [
-              new Paragraph({
-                text: "------------------------------------------------",
-                spacing: { before: 100, after: 100 },
-              }),
-              new Paragraph({
-                children: [
-                  new TextRun({
-                    text: `Q${idx + 1}`,
-                    bold: true,
-                  }),
-                ],
-              }),
-              new Paragraph({
-                text: m.question,
-                spacing: { after: 120 },
-              }),
-              ...m.options.map(
-                (opt, oi) =>
-                  new Paragraph({
-                    text: `${String.fromCharCode(65 + oi)}. ${opt}`,
-                    spacing: { after: 60 },
-                  }),
-              ),
-              new Paragraph({
-                children: [
-                  new TextRun({
-                    text: "Answer:",
-                    bold: true,
-                  }),
-                ],
-                spacing: { before: 100 },
-              }),
-              new Paragraph({
-                text: `${String.fromCharCode(65 + m.options.indexOf(m.correctAnswer))}. ${m.correctAnswer}`,
-                spacing: { after: 150 },
-              }),
-            ]),
-          ],
-        },
-      ],
-    });
-
-    const blob = await Packer.toBlob(doc);
-    saveAs(blob, `${pdfName.replace(".pdf", "")}_quiz.docx`);
-    onDownload();
-    toast.success("Word document (.docx) download started.");
+    generateWordDocument(pdfName, list, showExplanations, onDownload);
   };
 
   // ==========================================
@@ -3475,37 +3458,33 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
       { header: "Option B", key: "optB", width: 20 },
       { header: "Option C", key: "optC", width: 20 },
       { header: "Option D", key: "optD", width: 20 },
-      { header: "Correct Answer", key: "answer", width: 25 },
-      { header: "Explanation", key: "explanation", width: 40 },
-      { header: "Difficulty", key: "difficulty", width: 12 },
-      { header: "Category", key: "category", width: 15 },
+      { header: "Correct Answer", key: "answer", width: 20 },
+      { header: "Explanation", key: "exp", width: 40 },
     ];
 
     list.forEach((m, idx) => {
+      const opts = m.options || ["", "", "", ""];
+      const ansLetter = getAnswerLetter(m.correctAnswer, opts);
       sheet.addRow({
-        num: `Q${idx + 1}`,
-        question: m.question,
-        optA: m.options[0],
-        optB: m.options[1],
-        optC: m.options[2],
-        optD: m.options[3],
-        answer: `${String.fromCharCode(65 + m.options.indexOf(m.correctAnswer))}. ${m.correctAnswer}`,
-        explanation: m.explanation,
-        difficulty: m.difficulty,
-        category: m.category,
+        num: idx + 1,
+        question: cleanQuestionText(m.question),
+        optA: cleanOptionText(opts[0] || ""),
+        optB: cleanOptionText(opts[1] || ""),
+        optC: cleanOptionText(opts[2] || ""),
+        optD: cleanOptionText(opts[3] || ""),
+        answer: ansLetter,
+        exp: m.explanation || "",
       });
     });
-
-    // Formatting
-    sheet.getRow(1).font = { bold: true };
 
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], {
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     });
-    saveAs(blob, `${pdfName.replace(".pdf", "")}_quiz.xlsx`);
+    const cleanName = pdfName.replace(/\.(pdf|docx?)$/i, "").replace(/\s+/g, "_");
+    saveAs(blob, `${cleanName}_MCQs.xlsx`);
     onDownload();
-    toast.success("Excel sheet (.xlsx) download started.");
+    toast.success("Excel (.xlsx) downloaded successfully!");
   };
 
   // ==========================================
@@ -3522,21 +3501,19 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
 
   // Helper formatting for Clipboard
   function formatExamPlaintext(questions: MCQ[]) {
-    let output = "------------------------------------------------\n\n";
+    let output = "";
     questions.forEach((m, idx) => {
-      output += `${idx + 1}. ${m.question}\n\n`;
-      output += `A) ${m.options[0]}\n\n`;
-      output += `B) ${m.options[1]}\n\n`;
-      output += `C) ${m.options[2]}\n\n`;
-      output += `D) ${m.options[3]}\n\n`;
-      output += `Answer:\n`;
-      const ansIdx = m.options.indexOf(m.correctAnswer);
-      const letter = ansIdx !== -1 ? String.fromCharCode(65 + ansIdx) : "A";
-      output += `${letter}) ${m.correctAnswer}\n\n`;
+      const opts = m.options || ["", "", "", ""];
+      const ansLetter = getAnswerLetter(m.correctAnswer, opts);
+      output += `${idx + 1}. ${cleanQuestionText(m.question)}\n\n`;
+      opts.forEach((opt, oi) => {
+        output += `${String.fromCharCode(65 + oi)}. ${cleanOptionText(opt)}\n`;
+      });
+      output += `\nAnswer: ${ansLetter}\n`;
       if (showExplanations && m.explanation) {
-        output += `Explanation:\n${m.explanation}\n\n`;
+        output += `Explanation: ${m.explanation}\n`;
       }
-      output += `------------------------------------------------\n\n`;
+      output += `\n`;
     });
     return output.trim();
   }
@@ -3840,41 +3817,35 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
                             <div className="space-y-[10px] text-black bg-white font-sans">
                               {/* Question */}
                               <div className="font-bold text-[18px] leading-[1.6]">
-                                {i + 1}. {m.question}
+                                {i + 1}. {cleanQuestionText(m.question)}
                               </div>
 
                               {/* Options */}
                               {m.options.map((opt, oi) => (
                                 <div key={oi} className="font-normal text-[16px] leading-[1.6]">
-                                  {String.fromCharCode(65 + oi)}) {opt}
+                                  {String.fromCharCode(65 + oi)}. {cleanOptionText(opt)}
                                 </div>
                               ))}
 
                               {/* Answer */}
                               <div className="pt-[10px]">
-                                <div className="font-bold text-[16px] leading-[1.6]">Answer:</div>
                                 <div className="font-bold text-[16px] leading-[1.6]">
-                                  {String.fromCharCode(65 + m.options.indexOf(m.correctAnswer))}) {m.correctAnswer}
+                                  Answer: {getAnswerLetter(m.correctAnswer, m.options)}
                                 </div>
                               </div>
 
                               {/* Explanation */}
                               {showExplanations && m.explanation && (
-                                <div className="pt-[10px] text-gray-700">
-                                  <div className="font-bold text-[15px] leading-[1.6]">Explanation:</div>
-                                  <div className="font-normal italic text-[15px] leading-[1.6]">
+                                <div className="pt-[6px] text-gray-700">
+                                  <span className="font-bold text-[15px] leading-[1.6]">Explanation: </span>
+                                  <span className="font-normal italic text-[15px] leading-[1.6]">
                                     {m.explanation}
-                                  </div>
+                                  </span>
                                 </div>
                               )}
                             </div>
                           )}
                         </div>
-                      </div>
-
-                      {/* Separator line at bottom of each question */}
-                      <div className="font-mono text-[16px] text-black leading-[1.6] mt-[24px] select-none">
-                        ------------------------------------------------
                       </div>
                     </div>
                   </div>
@@ -3887,30 +3858,27 @@ function ReviewStage({ pdfName, mcqs, setMcqs, onStartTest, onDownload }: Review
 
       {/* 🖨️ PRINT ONLY CONTAINER */}
       <div className="print-only text-black bg-white font-sans">
-        <div className="print-separator">------------------------------------------------</div>
         {mcqs
           .filter((_, idx) => selectedIndices.has(idx))
           .map((m, idx) => {
-            const ansIndex = m.options.indexOf(m.correctAnswer);
-            const ansLetter = ansIndex !== -1 ? String.fromCharCode(65 + ansIndex) : "A";
+            const opts = m.options || ["", "", "", ""];
+            const ansLetter = getAnswerLetter(m.correctAnswer, opts);
             return (
-              <div key={idx} className="print-question-block">
-                <div className="print-question-text">{idx + 1}. {m.question}</div>
-                <div className="print-option">A) {m.options[0]}</div>
-                <div className="print-option">B) {m.options[1]}</div>
-                <div className="print-option">C) {m.options[2]}</div>
-                <div className="print-option">D) {m.options[3]}</div>
-                <div className="print-answer-label">Answer:</div>
-                <div className="print-answer-text">
-                  {ansLetter}) {m.correctAnswer}
+              <div key={idx} className="print-question-block mb-6">
+                <div className="print-question-text font-bold text-base">{idx + 1}. {cleanQuestionText(m.question)}</div>
+                {opts.map((opt, oi) => (
+                  <div key={oi} className="print-option text-sm">
+                    {String.fromCharCode(65 + oi)}. {cleanOptionText(opt)}
+                  </div>
+                ))}
+                <div className="print-answer-label font-bold text-sm mt-2">
+                  Answer: {ansLetter}
                 </div>
                 {showExplanations && m.explanation && (
-                  <>
-                    <div className="print-explanation-label">Explanation:</div>
-                    <div className="print-explanation-text">{m.explanation}</div>
-                  </>
+                  <div className="print-explanation-text text-sm italic mt-1">
+                    Explanation: {m.explanation}
+                  </div>
                 )}
-                <div className="print-separator">------------------------------------------------</div>
               </div>
             );
           })}
