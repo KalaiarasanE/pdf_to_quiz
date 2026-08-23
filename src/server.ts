@@ -128,6 +128,49 @@ export default {
         }
       }
 
+      if (url.pathname === "/api/generate-study-material" && request.method === "POST") {
+        try {
+          const config = await request.json();
+          console.log(
+            `Generating Study Material for ${config.pdfName} with ${config.apiProvider} (${config.modelName})...`,
+          );
+          const { generateStudyMaterialStream } = await import("./lib/study-material.server");
+          const stream = generateStudyMaterialStream({ ...config, env });
+
+          const encoder = new TextEncoder();
+          const readableStream = new ReadableStream({
+            async start(controller) {
+              try {
+                for await (const update of stream) {
+                  controller.enqueue(encoder.encode(JSON.stringify(update) + "\n"));
+                }
+              } catch (e) {
+                console.error("Study Material stream generation error:", e);
+                const errMsg = e instanceof Error ? e.message : "Error generating study material";
+                controller.enqueue(encoder.encode(JSON.stringify({ stage: "error", error: errMsg, message: errMsg }) + "\n"));
+              } finally {
+                controller.close();
+              }
+            },
+          });
+
+          return new Response(readableStream, {
+            headers: {
+              "Content-Type": "application/x-ndjson; charset=utf-8",
+              "Cache-Control": "no-cache",
+              Connection: "keep-alive",
+            },
+          });
+        } catch (error) {
+          console.error("Study Material endpoint error:", error);
+          const errMsg = error instanceof Error ? error.message : "Internal Server Error";
+          return new Response(JSON.stringify({ error: errMsg }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      }
+
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
       return await normalizeCatastrophicSsrResponse(response);

@@ -59,3 +59,37 @@ create index quizzes_created_at_idx on quizzes(created_at desc);
 
 create index mock_attempts_user_id_idx on mock_attempts(user_id);
 create index mock_attempts_created_at_idx on mock_attempts(created_at desc);
+
+create table study_materials (
+  id uuid default gen_random_uuid() primary key,
+  user_id uuid references auth.users(id) on delete cascade not null,
+  pdf_name text not null,
+  title text not null,
+  language text not null,
+  total_points integer default 0,
+  chapters jsonb not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+alter table study_materials enable row level security;
+
+create policy "Users can view their own study materials" 
+  on study_materials for select 
+  using (auth.uid() = user_id);
+
+create policy "Users can insert their own study materials" 
+  on study_materials for insert 
+  with check (auth.uid() = user_id);
+
+create policy "Users can update their own study materials" 
+  on study_materials for update 
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy "Users can delete their own study materials" 
+  on study_materials for delete 
+  using (auth.uid() = user_id);
+
+create index study_materials_user_id_idx on study_materials(user_id);
+create index study_materials_created_at_idx on study_materials(created_at desc);
+

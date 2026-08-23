@@ -38,6 +38,10 @@ import {
   PlusCircle,
   Eye,
   Edit3,
+  GraduationCap,
+  BookMarked,
+  ArrowRight,
+  Layers,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -56,6 +60,10 @@ import {
 import { Toaster } from "@/components/ui/sonner";
 import { type MCQ } from "@/lib/ai-stream.server";
 import { getSupabaseClient, getSupabaseConfig } from "@/lib/supabase";
+import { StudyMaterialData } from "@/lib/study-material.types";
+import { StudyMaterialView } from "@/components/StudyMaterialView";
+import { StudyMaterialConfigureStage } from "@/components/StudyMaterialConfigureStage";
+import { generateStudyMaterialPdf, generateStudyMaterialWord } from "@/lib/study-material.pdf";
 
 import html2canvas from "html2canvas";
 
@@ -89,9 +97,25 @@ export type MockTestAttempt = {
   created_at: string;
 };
 
-type Tab = "dashboard" | "generate" | "recent-activity" | "mock-tests" | "settings" | "profile";
+type Tab =
+  | "dashboard"
+  | "generate"
+  | "study-material"
+  | "recent-activity"
+  | "mock-tests"
+  | "settings"
+  | "profile";
 
-type Stage = "upload" | "extracting" | "configuring" | "generating" | "review" | "test" | "results";
+type Stage =
+  | "upload"
+  | "extracting"
+  | "configuring"
+  | "generating"
+  | "review"
+  | "test"
+  | "results"
+  | "study-material-configuring"
+  | "study-material-preview";
 
 type PdfMeta = {
   name: string;
@@ -524,12 +548,13 @@ type DashboardStats = {
   uploadedPdfs: number;
   totalPages: number;
   questionsGenerated: number;
+  studyMaterialsCreated: number;
   totalGenTimeSec: number;
   mockTestsCreated: number;
   downloadHistoryCount: number;
   recentActivity: Array<{
     id: string;
-    type: "upload" | "generate" | "test" | "download";
+    type: "upload" | "generate" | "study-material" | "test" | "download";
     detail: string;
     time: string;
   }>;
@@ -539,6 +564,7 @@ const DEFAULT_STATS: DashboardStats = {
   uploadedPdfs: 0,
   totalPages: 0,
   questionsGenerated: 0,
+  studyMaterialsCreated: 0,
   totalGenTimeSec: 0,
   mockTestsCreated: 0,
   downloadHistoryCount: 0,
@@ -799,9 +825,11 @@ async function extractDocxText(file: File): Promise<{
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>("generate");
   const [stage, setStage] = useState<Stage>("upload");
+  const [targetCreationMode, setTargetCreationMode] = useState<"mcq" | "study-material">("mcq");
   const [pdf, setPdf] = useState<PdfMeta | null>(null);
   const [currentFile, setCurrentFile] = useState<File | null>(null);
   const [mcqs, setMcqs] = useState<MCQ[]>([]);
+  const [studyMaterial, setStudyMaterial] = useState<StudyMaterialData | null>(null);
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [testTime, setTestTime] = useState<number>(0);
   const [stats, setStats] = useState<DashboardStats>(DEFAULT_STATS);
@@ -813,11 +841,11 @@ function App() {
   const [modelName, setModelName] = useState<string>("gemini-3.1-flash-lite");
   const [selectedLanguage, setSelectedLanguage] = useState<string>("");
 
-
   // Supabase & Auth states
   const [user, setUser] = useState<any>(null);
   const [supabaseClient, setSupabaseClient] = useState<any>(null);
   const [recentQuizzes, setRecentQuizzes] = useState<SavedQuiz[]>([]);
+  const [recentStudyMaterials, setRecentStudyMaterials] = useState<StudyMaterialData[]>([]);
   const [mockAttempts, setMockAttempts] = useState<MockTestAttempt[]>([]);
 
   // Navigation & responsive states
@@ -839,18 +867,21 @@ function App() {
         setUser(session?.user ?? null);
         fetchQuizzes(session?.user ?? null, client);
         fetchAttempts(session?.user ?? null, client);
+        fetchStudyMaterials(session?.user ?? null, client);
       });
 
       const { data: { subscription } } = client.auth.onAuthStateChange((_event, session) => {
         setUser(session?.user ?? null);
         fetchQuizzes(session?.user ?? null, client);
         fetchAttempts(session?.user ?? null, client);
+        fetchStudyMaterials(session?.user ?? null, client);
       });
 
       return () => subscription.unsubscribe();
     } else {
       fetchQuizzes(null, null);
       fetchAttempts(null, null);
+      fetchStudyMaterials(null, null);
     }
   }, []);
 
@@ -877,6 +908,33 @@ function App() {
       const local = localStorage.getItem("quizcrack_quizzes");
       if (local) {
         try { setRecentQuizzes(JSON.parse(local)); } catch (e) {}
+      }
+    }
+  };
+
+  const fetchStudyMaterials = async (currentUser: any, client: any) => {
+    if (!client || !currentUser) {
+      const local = localStorage.getItem("quizcrack_study_materials");
+      if (local) {
+        try { setRecentStudyMaterials(JSON.parse(local)); } catch (e) {}
+      } else {
+        setRecentStudyMaterials([]);
+      }
+      return;
+    }
+
+    try {
+      const { data, error } = await client
+        .from("study_materials")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      setRecentStudyMaterials(data || []);
+    } catch (e) {
+      console.error("Error fetching study materials:", e);
+      const local = localStorage.getItem("quizcrack_study_materials");
+      if (local) {
+        try { setRecentStudyMaterials(JSON.parse(local)); } catch (e) {}
       }
     }
   };
@@ -954,6 +1012,84 @@ function App() {
       } catch (e) {
         console.error("Error saving quiz to Supabase:", e);
       }
+    }
+  };
+
+  const saveGeneratedStudyMaterial = async (materialData: StudyMaterialData) => {
+    // Save locally
+    const local = localStorage.getItem("quizcrack_study_materials");
+    let currentLocal: StudyMaterialData[] = [];
+    if (local) {
+      try { currentLocal = JSON.parse(local); } catch (e) {}
+    }
+    const updatedLocal = [materialData, ...currentLocal.filter((m) => m.id !== materialData.id)];
+    localStorage.setItem("quizcrack_study_materials", JSON.stringify(updatedLocal));
+    setRecentStudyMaterials(updatedLocal);
+
+    // Save to Supabase if logged in
+    if (user && supabaseClient) {
+      try {
+        const { data, error } = await supabaseClient
+          .from("study_materials")
+          .insert({
+            pdf_name: materialData.pdf_name,
+            title: materialData.title,
+            language: materialData.language || "English",
+            total_points: materialData.total_points || 0,
+            chapters: materialData.chapters,
+            user_id: user.id,
+          })
+          .select();
+        if (error) throw error;
+        if (data && data[0]) {
+          setRecentStudyMaterials((prev) =>
+            prev.map((m) => (m.id === materialData.id ? data[0] : m))
+          );
+        }
+      } catch (e) {
+        console.error("Error saving study material to Supabase:", e);
+      }
+    }
+  };
+
+  const renameStudyMaterial = async (id: string, newTitle: string) => {
+    const updated = recentStudyMaterials.map((m) => (m.id === id ? { ...m, title: newTitle } : m));
+    setRecentStudyMaterials(updated);
+    localStorage.setItem("quizcrack_study_materials", JSON.stringify(updated));
+
+    if (user && supabaseClient && isUuid(id)) {
+      try {
+        const { error } = await supabaseClient
+          .from("study_materials")
+          .update({ title: newTitle })
+          .eq("id", id);
+        if (error) throw error;
+        toast.success("Study Material renamed successfully!");
+      } catch (e) {
+        console.error("Error renaming in Supabase:", e);
+        toast.error("Failed to rename on server, updated locally.");
+      }
+    } else {
+      toast.success("Study Material renamed successfully!");
+    }
+  };
+
+  const deleteStudyMaterial = async (id: string) => {
+    const updated = recentStudyMaterials.filter((m) => m.id !== id);
+    setRecentStudyMaterials(updated);
+    localStorage.setItem("quizcrack_study_materials", JSON.stringify(updated));
+
+    if (user && supabaseClient && isUuid(id)) {
+      try {
+        const { error } = await supabaseClient.from("study_materials").delete().eq("id", id);
+        if (error) throw error;
+        toast.success("Study Material deleted successfully!");
+      } catch (e) {
+        console.error("Error deleting in Supabase:", e);
+        toast.error("Failed to delete from server.");
+      }
+    } else {
+      toast.success("Study Material deleted successfully!");
     }
   };
 
@@ -1102,6 +1238,24 @@ function App() {
     });
   };
 
+  const handleDownloadStudyMaterialPdf = (materialData: StudyMaterialData) => {
+    generateStudyMaterialPdf(materialData, {
+      onSuccess: () => {
+        updateStats((prev) => ({ ...prev, downloadHistoryCount: prev.downloadHistoryCount + 1 }));
+        logActivity("download", `Downloaded Study Material PDF for "${materialData.title}"`);
+      },
+    });
+  };
+
+  const handleDownloadStudyMaterialDocx = (materialData: StudyMaterialData) => {
+    generateStudyMaterialWord(materialData, {
+      onSuccess: () => {
+        updateStats((prev) => ({ ...prev, downloadHistoryCount: prev.downloadHistoryCount + 1 }));
+        logActivity("download", `Downloaded Study Material DOCX for "${materialData.title}"`);
+      },
+    });
+  };
+
   // Central File processing handler
   const handleGlobalFile = async (file: File) => {
     const fileName = file.name.toLowerCase();
@@ -1137,8 +1291,13 @@ function App() {
           setPdf(cached);
           setCurrentFile(file);
           setGlobalUploading(false);
-          setActiveTab("generate");
-          setStage("configuring");
+          if (targetCreationMode === "study-material" || activeTab === "study-material") {
+            setActiveTab("study-material");
+            setStage("study-material-configuring");
+          } else {
+            setActiveTab("generate");
+            setStage("configuring");
+          }
         }, 300);
         return;
       }
@@ -1237,8 +1396,13 @@ function App() {
         setPdf(meta);
         setCurrentFile(file);
         setGlobalUploading(false);
-        setActiveTab("generate");
-        setStage("configuring");
+        if (targetCreationMode === "study-material" || activeTab === "study-material") {
+          setActiveTab("study-material");
+          setStage("study-material-configuring");
+        } else {
+          setActiveTab("generate");
+          setStage("configuring");
+        }
 
         updateStats((prev) => ({
           ...prev,
@@ -1445,6 +1609,7 @@ function App() {
           <div className="p-3 flex flex-col gap-1.5 flex-1">
             {[
               { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+              { id: "study-material", label: "Study Material", icon: GraduationCap },
               { id: "generate", label: "Generate Quiz", icon: FileText },
               { id: "recent-activity", label: "Recent Activity", icon: History },
               { id: "mock-tests", label: "Mock Tests", icon: Trophy },
@@ -1458,7 +1623,22 @@ function App() {
                   key={t.id}
                   onClick={() => {
                     setActiveTab(t.id as Tab);
-                    if (t.id === "generate" && stage === "results") setStage("upload");
+                    if (t.id === "study-material") {
+                      setTargetCreationMode("study-material");
+                      if (studyMaterial) {
+                        setStage("study-material-preview");
+                      } else if (pdf) {
+                        setStage("study-material-configuring");
+                      } else {
+                        setStage("upload");
+                      }
+                    } else if (t.id === "generate") {
+                      setTargetCreationMode("mcq");
+                      if (stage === "results") setStage("upload");
+                      else if (mcqs.length > 0) setStage("review");
+                      else if (pdf) setStage("configuring");
+                      else setStage("upload");
+                    }
                   }}
                   className={`flex items-center gap-3.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
                     isActive
@@ -1518,6 +1698,7 @@ function App() {
                 <div className="flex flex-col gap-1">
                   {[
                     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+                    { id: "study-material", label: "Study Material", icon: GraduationCap },
                     { id: "generate", label: "Generate Quiz", icon: FileText },
                     { id: "recent-activity", label: "Recent Activity", icon: History },
                     { id: "mock-tests", label: "Mock Tests", icon: Trophy },
@@ -1532,7 +1713,22 @@ function App() {
                         onClick={() => {
                           setActiveTab(t.id as Tab);
                           setMobileMenuOpen(false);
-                          if (t.id === "generate" && stage === "results") setStage("upload");
+                          if (t.id === "study-material") {
+                            setTargetCreationMode("study-material");
+                            if (studyMaterial) {
+                              setStage("study-material-preview");
+                            } else if (pdf) {
+                              setStage("study-material-configuring");
+                            } else {
+                              setStage("upload");
+                            }
+                          } else if (t.id === "generate") {
+                            setTargetCreationMode("mcq");
+                            if (stage === "results") setStage("upload");
+                            else if (mcqs.length > 0) setStage("review");
+                            else if (pdf) setStage("configuring");
+                            else setStage("upload");
+                          }
                         }}
                         className={`flex items-center gap-3.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
                           isActive
@@ -1576,12 +1772,112 @@ function App() {
           {activeTab === "dashboard" && (
             <Dashboard
               stats={stats}
+              onCreateStudyMaterial={() => {
+                setTargetCreationMode("study-material");
+                setActiveTab("study-material");
+                if (studyMaterial) {
+                  setStage("study-material-preview");
+                } else if (pdf) {
+                  setStage("study-material-configuring");
+                } else {
+                  setStage("upload");
+                }
+              }}
+              onCreateQuiz={() => {
+                setTargetCreationMode("mcq");
+                setActiveTab("generate");
+                if (mcqs.length > 0) {
+                  setStage("review");
+                } else if (pdf) {
+                  setStage("configuring");
+                } else {
+                  setStage("upload");
+                }
+              }}
               onResetStats={() => {
                 localStorage.removeItem("quizcrack_stats");
                 setStats(DEFAULT_STATS);
                 toast.success("Dashboard metrics reset.");
               }}
             />
+          )}
+
+          {activeTab === "study-material" && (
+            <>
+              {stage === "upload" && (
+                <UploadStage
+                  title="Create Study Material from Documents"
+                  subtitle="Drop any textbook, syllabus, theory PDF, or Word document (.pdf, .doc, .docx). Our AI extracts structured concepts, key facts, dates, and quick revision notes."
+                  mode="study-material"
+                  onSelectMode={(m) => {
+                    if (m === "mcq") {
+                      setTargetCreationMode("mcq");
+                      setActiveTab("generate");
+                      setStage("upload");
+                    }
+                  }}
+                  onLoaded={(meta, file) => {
+                    setPdf(meta);
+                    setCurrentFile(file);
+                    setStage("study-material-configuring");
+                    updateStats((prev) => ({
+                      ...prev,
+                      uploadedPdfs: prev.uploadedPdfs + 1,
+                      totalPages: prev.totalPages + meta.pages,
+                    }));
+                    logActivity("upload", `Uploaded "${meta.name}" for Study Material`);
+                  }}
+                  onSelectFile={(file) => {
+                    setTargetCreationMode("study-material");
+                    handleGlobalFile(file);
+                  }}
+                />
+              )}
+
+              {stage === "study-material-configuring" && pdf && (
+                <StudyMaterialConfigureStage
+                  pdf={pdf}
+                  currentFile={currentFile}
+                  apiKey={apiKey}
+                  apiProvider={apiProvider}
+                  modelName={modelName}
+                  onBack={() => setStage("upload")}
+                  selectedLanguage={selectedLanguage}
+                  setSelectedLanguage={setSelectedLanguage}
+                  onFinished={(materialData, timeSec) => {
+                    setStudyMaterial(materialData);
+                    setStage("study-material-preview");
+                    updateStats((prev) => ({
+                      ...prev,
+                      studyMaterialsCreated: (prev.studyMaterialsCreated || 0) + 1,
+                      totalGenTimeSec: prev.totalGenTimeSec + timeSec,
+                    }));
+                    logActivity(
+                      "study-material",
+                      `Created Study Material "${materialData.title}" (${materialData.chapters.length} chapters) in ${timeSec}s`,
+                    );
+                    saveGeneratedStudyMaterial(materialData);
+                  }}
+                />
+              )}
+
+              {stage === "study-material-preview" && studyMaterial && (
+                <StudyMaterialView
+                  material={studyMaterial}
+                  onBack={() => {
+                    if (pdf) {
+                      setStage("study-material-configuring");
+                    } else {
+                      setStage("upload");
+                    }
+                  }}
+                  onUpdateMaterial={(updated) => {
+                    setStudyMaterial(updated);
+                    saveGeneratedStudyMaterial(updated);
+                  }}
+                />
+              )}
+            </>
           )}
 
           {activeTab === "settings" && (
@@ -1607,7 +1903,8 @@ function App() {
           {activeTab === "recent-activity" && (
             <RecentActivity
               quizzes={recentQuizzes}
-              onView={(quiz) => {
+              studyMaterials={recentStudyMaterials}
+              onViewQuiz={(quiz) => {
                 setMcqs(quiz.questions);
                 setPdf({
                   name: quiz.pdf_name,
@@ -1623,8 +1920,26 @@ function App() {
                 setStage("review");
                 setActiveTab("generate");
               }}
+              onViewStudyMaterial={(materialData) => {
+                setStudyMaterial(materialData);
+                setPdf({
+                  name: materialData.pdf_name,
+                  size: 0,
+                  pages: 0,
+                  chars: 0,
+                  text: "",
+                  isScanned: false,
+                  primaryLanguage: materialData.language,
+                  languages: [materialData.language],
+                });
+                setSelectedLanguage(materialData.language);
+                setStage("study-material-preview");
+                setActiveTab("study-material");
+              }}
               onDownloadPdf={handleDownloadPdf}
               onDownloadDocx={handleDownloadWord}
+              onDownloadStudyMaterialPdf={handleDownloadStudyMaterialPdf}
+              onDownloadStudyMaterialDocx={handleDownloadStudyMaterialDocx}
               onStartTest={(quiz) => {
                 setMcqs(quiz.questions);
                 setPdf({
@@ -1642,9 +1957,11 @@ function App() {
                 setStage("test");
                 setActiveTab("generate");
               }}
-              onRename={renameQuiz}
-              onDuplicate={duplicateQuiz}
-              onDelete={deleteQuiz}
+              onRenameQuiz={renameQuiz}
+              onRenameStudyMaterial={renameStudyMaterial}
+              onDuplicateQuiz={duplicateQuiz}
+              onDeleteQuiz={deleteQuiz}
+              onDeleteStudyMaterial={deleteStudyMaterial}
             />
           )}
 
@@ -1706,6 +2023,14 @@ function App() {
             <>
               {stage === "upload" && (
                 <UploadStage
+                  mode="mcq"
+                  onSelectMode={(m) => {
+                    if (m === "study-material") {
+                      setTargetCreationMode("study-material");
+                      setActiveTab("study-material");
+                      setStage("upload");
+                    }
+                  }}
                   onLoaded={(meta, file) => {
                     setPdf(meta);
                     setCurrentFile(file);
@@ -1717,7 +2042,10 @@ function App() {
                     }));
                     logActivity("upload", `Uploaded "${meta.name}" (${meta.pages} pages)`);
                   }}
-                  onSelectFile={handleGlobalFile}
+                  onSelectFile={(file) => {
+                    setTargetCreationMode("mcq");
+                    handleGlobalFile(file);
+                  }}
                 />
               )}
 
@@ -1730,6 +2058,11 @@ function App() {
                   modelName={modelName}
                   onBack={() => setStage("upload")}
                   onStartGenerating={() => setStage("generating")}
+                  onSwitchToStudyMaterial={() => {
+                    setTargetCreationMode("study-material");
+                    setActiveTab("study-material");
+                    setStage("study-material-configuring");
+                  }}
                   selectedLanguage={selectedLanguage}
                   setSelectedLanguage={setSelectedLanguage}
                   onFinished={(list, timeSec) => {
@@ -1819,7 +2152,17 @@ function App() {
 // ==========================================
 // 📈 DASHBOARD COMPONENT
 // ==========================================
-function Dashboard({ stats, onResetStats }: { stats: DashboardStats; onResetStats: () => void }) {
+function Dashboard({
+  stats,
+  onCreateStudyMaterial,
+  onCreateQuiz,
+  onResetStats,
+}: {
+  stats: DashboardStats;
+  onCreateStudyMaterial: () => void;
+  onCreateQuiz: () => void;
+  onResetStats: () => void;
+}) {
   const avgGenTime =
     stats.questionsGenerated > 0
       ? (stats.totalGenTimeSec / stats.questionsGenerated).toFixed(2)
@@ -1827,11 +2170,11 @@ function Dashboard({ stats, onResetStats }: { stats: DashboardStats; onResetStat
 
   return (
     <div className="space-y-8 animate-fade-in">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-extrabold tracking-tight">Analytics Dashboard</h1>
+          <h1 className="text-3xl font-extrabold tracking-tight">AI Education Hub & Analytics</h1>
           <p className="text-muted-foreground mt-1">
-            Track your quiz generation history, PDF metrics, and performance.
+            Turn lengthy textbooks and syllabus PDFs into exam-oriented Study Notes & MCQs.
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={onResetStats}>
@@ -1839,22 +2182,94 @@ function Dashboard({ stats, onResetStats }: { stats: DashboardStats; onResetStat
         </Button>
       </div>
 
+      {/* Flagship AI Features Cards */}
+      <div className="grid gap-6 md:grid-cols-2">
+        {/* Feature 1: Study Material Generator */}
+        <Card className="p-7 relative overflow-hidden bg-gradient-to-br from-indigo-500/10 via-purple-500/5 to-transparent border-2 border-indigo-500/30 hover:border-indigo-500/60 hover:shadow-xl transition-all flex flex-col justify-between group">
+          <div className="space-y-3.5">
+            <div className="flex items-center justify-between">
+              <div className="p-3 rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-500/30 group-hover:scale-105 transition-transform">
+                <GraduationCap className="h-7 w-7" />
+              </div>
+              <Badge className="bg-indigo-500/20 text-indigo-400 border-indigo-500/30 font-bold text-xs">
+                EXAM REVISION NOTES
+              </Badge>
+            </div>
+            <div>
+              <h2 className="text-2xl font-extrabold tracking-tight">📚 Study Material Generator</h2>
+              <p className="text-sm text-muted-foreground leading-relaxed mt-1.5">
+                Convert any PDF into easy-to-revise, exam-oriented study material with key facts,
+                definitions, timeline dates, and quick revision cards.
+              </p>
+            </div>
+          </div>
+
+          <div className="pt-6 border-t border-border/40 mt-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <span className="text-xs text-muted-foreground">
+              A4 Clean Book • Tamil/Hindi/English • Zero Hallucination
+            </span>
+            <Button
+              onClick={onCreateStudyMaterial}
+              className="bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-600 hover:from-indigo-700 hover:to-purple-700 text-white font-bold shadow-md shadow-indigo-500/25 gap-2"
+            >
+              <Sparkles className="h-4 w-4" />
+              Create Study Material
+            </Button>
+          </div>
+        </Card>
+
+        {/* Feature 2: PDF to MCQ Generator */}
+        <Card className="p-7 relative overflow-hidden bg-gradient-to-br from-purple-500/10 via-cyan-500/5 to-transparent border-2 border-purple-500/30 hover:border-purple-500/60 hover:shadow-xl transition-all flex flex-col justify-between group">
+          <div className="space-y-3.5">
+            <div className="flex items-center justify-between">
+              <div className="p-3 rounded-2xl bg-purple-600 text-white shadow-lg shadow-purple-500/30 group-hover:scale-105 transition-transform">
+                <FileText className="h-7 w-7" />
+              </div>
+              <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/30 font-bold text-xs">
+                MOCK TEST ENGINE
+              </Badge>
+            </div>
+            <div>
+              <h2 className="text-2xl font-extrabold tracking-tight">📝 PDF → MCQ Generator</h2>
+              <p className="text-sm text-muted-foreground leading-relaxed mt-1.5">
+                Generate high-quality multiple choice questions with detailed explanations, test simulations,
+                and exam paper exports.
+              </p>
+            </div>
+          </div>
+
+          <div className="pt-6 border-t border-border/40 mt-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <span className="text-xs text-muted-foreground">
+              Timed Mock Tests • Instant Evaluation • Word/PDF Export
+            </span>
+            <Button
+              onClick={onCreateQuiz}
+              variant="outline"
+              className="font-bold border-purple-500/40 text-purple-400 hover:bg-purple-500/10 gap-2"
+            >
+              <Play className="h-4 w-4" />
+              Generate MCQs
+            </Button>
+          </div>
+        </Card>
+      </div>
+
       {/* Stats Cards */}
       <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
         {[
           {
-            label: "Uploaded PDFs",
+            label: "Uploaded Documents",
             value: stats.uploadedPdfs,
             sub: "Total documents processed",
             icon: BookOpen,
             color: "text-indigo-500 bg-indigo-500/10",
           },
           {
-            label: "Total Pages Extracted",
-            value: stats.totalPages,
-            sub: "Pages read by parser/OCR",
-            icon: FileText,
-            color: "text-cyan-500 bg-cyan-500/10",
+            label: "Study Materials Created",
+            value: stats.studyMaterialsCreated || 0,
+            sub: "Structured revision notes",
+            icon: GraduationCap,
+            color: "text-amber-500 bg-amber-500/10",
           },
           {
             label: "Questions Generated",
@@ -1864,11 +2279,11 @@ function Dashboard({ stats, onResetStats }: { stats: DashboardStats; onResetStat
             color: "text-purple-500 bg-purple-500/10",
           },
           {
-            label: "Avg Speed (Sec/Q)",
-            value: avgGenTime,
-            sub: "Seconds per generated question",
-            icon: Loader2,
-            color: "text-emerald-500 bg-emerald-500/10",
+            label: "Total Pages Extracted",
+            value: stats.totalPages,
+            sub: "Pages read by parser/OCR",
+            icon: FileText,
+            color: "text-cyan-500 bg-cyan-500/10",
           },
         ].map((c, i) => (
           <Card
@@ -1892,8 +2307,12 @@ function Dashboard({ stats, onResetStats }: { stats: DashboardStats; onResetStat
       <div className="grid gap-6 md:grid-cols-3">
         {/* Mock test performance info */}
         <Card className="p-6 bg-card/60 backdrop-blur-sm md:col-span-1">
-          <h3 className="text-lg font-bold tracking-tight mb-4">Quiz Metrics</h3>
+          <h3 className="text-lg font-bold tracking-tight mb-4">Quiz & Study Metrics</h3>
           <div className="space-y-4">
+            <div className="flex items-center justify-between border-b border-border/40 pb-2">
+              <span className="text-sm text-muted-foreground">Study Notes Generated</span>
+              <span className="font-semibold text-lg">{stats.studyMaterialsCreated || 0}</span>
+            </div>
             <div className="flex items-center justify-between border-b border-border/40 pb-2">
               <span className="text-sm text-muted-foreground">Mock Tests Started</span>
               <span className="font-semibold text-lg">{stats.mockTestsCreated}</span>
@@ -1905,7 +2324,7 @@ function Dashboard({ stats, onResetStats }: { stats: DashboardStats; onResetStat
             <div className="flex items-center justify-between pb-2">
               <span className="text-sm text-muted-foreground">AI Generation Efficiency</span>
               <span className="font-semibold text-emerald-500 text-sm flex items-center gap-1">
-                High Speed (Gemini)
+                High Speed (Gemini 3.5)
               </span>
             </div>
           </div>
@@ -1917,7 +2336,7 @@ function Dashboard({ stats, onResetStats }: { stats: DashboardStats; onResetStat
           <div className="max-h-64 overflow-y-auto pr-2 space-y-3 scrollbar-thin">
             {stats.recentActivity.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-8">
-                No recent activity. Start generating quizzes!
+                No recent activity. Start generating study materials or quizzes!
               </p>
             ) : (
               stats.recentActivity.map((a) => (
@@ -1928,13 +2347,15 @@ function Dashboard({ stats, onResetStats }: { stats: DashboardStats; onResetStat
                   <div className="flex gap-2.5 items-center">
                     <span
                       className={`h-2.5 w-2.5 rounded-full shrink-0 ${
-                        a.type === "upload"
+                        a.type === "study-material"
+                          ? "bg-amber-500"
+                          : a.type === "upload"
                           ? "bg-indigo-500"
                           : a.type === "generate"
-                            ? "bg-purple-500"
-                            : a.type === "test"
-                              ? "bg-emerald-500"
-                              : "bg-cyan-500"
+                          ? "bg-purple-500"
+                          : a.type === "test"
+                          ? "bg-emerald-500"
+                          : "bg-cyan-500"
                       }`}
                     />
                     <p className="font-medium text-foreground">{a.detail}</p>
@@ -2107,13 +2528,26 @@ function Settings({
 // ==========================================
 // 📂 UPLOAD STAGE COMPONENT
 // ==========================================
+// 📂 UPLOAD STAGE COMPONENT
+// ==========================================
 type UploadProps = {
   onLoaded: (meta: PdfMeta, file: File) => void;
   onExtractionProgress?: (pct: number, stageName: string) => void;
   onSelectFile?: (file: File) => void;
+  title?: string;
+  subtitle?: string;
+  mode?: "mcq" | "study-material";
+  onSelectMode?: (mode: "mcq" | "study-material") => void;
 };
 
-function UploadStage({ onLoaded, onSelectFile }: UploadProps) {
+function UploadStage({
+  onLoaded,
+  onSelectFile,
+  title,
+  subtitle,
+  mode = "mcq",
+  onSelectMode,
+}: UploadProps) {
   const [dragging, setDragging] = useState(false);
   const [progress, setProgress] = useState(0);
   const [stageName, setStageName] = useState("");
@@ -2266,15 +2700,53 @@ function UploadStage({ onLoaded, onSelectFile }: UploadProps) {
     [onLoaded, onSelectFile],
   );
 
+  const displayTitle =
+    title ||
+    (mode === "study-material"
+      ? "Create Study Material from Documents"
+      : "Create Quizzes from Documents in Seconds");
+
+  const displaySubtitle =
+    subtitle ||
+    (mode === "study-material"
+      ? "Drop any syllabus, chapter, PDF or Word document. Our AI converts it into concise, revision-ready study notes."
+      : "Drop any study guide, textbook, PDF, or Word document (.pdf, .doc, .docx). Our AI parses text and generates custom exam questions.");
+
   return (
     <div className="space-y-8 max-w-4xl mx-auto animate-fade-in">
       <div className="space-y-3 text-center">
+        {onSelectMode && (
+          <div className="inline-flex items-center gap-1.5 p-1 bg-muted/60 rounded-full border border-border/60 text-xs font-semibold mb-2">
+            <button
+              onClick={() => onSelectMode("study-material")}
+              className={`px-3.5 py-1.5 rounded-full transition-all flex items-center gap-1.5 ${
+                mode === "study-material"
+                  ? "bg-indigo-600 text-white shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <GraduationCap className="h-3.5 w-3.5" />
+              <span>📚 Study Material</span>
+            </button>
+            <button
+              onClick={() => onSelectMode("mcq")}
+              className={`px-3.5 py-1.5 rounded-full transition-all flex items-center gap-1.5 ${
+                mode === "mcq"
+                  ? "bg-purple-600 text-white shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <FileText className="h-3.5 w-3.5" />
+              <span>📝 Quizzes (MCQs)</span>
+            </button>
+          </div>
+        )}
+
         <h1 className="text-4xl font-extrabold tracking-tight md:text-5xl bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500 bg-clip-text text-transparent">
-          Create Quizzes from Documents in Seconds
+          {displayTitle}
         </h1>
         <p className="mx-auto max-w-2xl text-muted-foreground">
-          Drop any study guide, textbook, PDF, or Word document (.pdf, .doc, .docx). Our AI parses text in
-          parallel and generates custom exam questions.
+          {displaySubtitle}
         </p>
       </div>
 
@@ -2298,7 +2770,7 @@ function UploadStage({ onLoaded, onSelectFile }: UploadProps) {
         onClick={() => !busy && inputRef.current?.click()}
       >
         <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-indigo-500/10 text-indigo-500 shadow-md">
-          <Upload className="h-7 w-7" />
+          {mode === "study-material" ? <GraduationCap className="h-7 w-7" /> : <Upload className="h-7 w-7" />}
         </div>
         <h2 className="mt-5 text-xl font-bold tracking-tight">Drag & drop your PDF, DOC, or DOCX file here</h2>
         <p className="mt-2 text-sm text-muted-foreground max-w-sm mx-auto">
@@ -2370,6 +2842,7 @@ type ConfigureProps = {
   onBack: () => void;
   onStartGenerating: () => void;
   onFinished: (mcqs: MCQ[], timeSec: number) => void;
+  onSwitchToStudyMaterial?: () => void;
   selectedLanguage: string;
   setSelectedLanguage: (lang: string) => void;
 };
@@ -2888,12 +3361,27 @@ function ConfigureStage({
       <div className="md:col-span-2 space-y-6">
         {!busy ? (
           <Card className="p-8 bg-card/40 backdrop-blur-sm border-border">
-            <h2 className="text-2xl font-bold tracking-tight">Configure AI Generation</h2>
-            <p className="mt-1.5 text-sm text-muted-foreground">
-              Select questions quantity and difficulty options.
-            </p>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+              <div>
+                <h2 className="text-2xl font-bold tracking-tight">Configure MCQ Generation</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Select questions quantity and difficulty options.
+                </p>
+              </div>
+              {onSwitchToStudyMaterial && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={onSwitchToStudyMaterial}
+                  className="text-xs h-8 gap-1.5 border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10 shrink-0"
+                >
+                  <GraduationCap className="h-3.5 w-3.5" />
+                  <span>Switch to Study Notes</span>
+                </Button>
+              )}
+            </div>
 
-            <div className="mt-8 space-y-6">
+            <div className="mt-6 space-y-6">
               <div>
                 <Label className="mb-3 block text-sm font-semibold">Number of questions</Label>
                 <div className="flex flex-wrap gap-2.5">
@@ -4337,29 +4825,42 @@ function Results({ mcqs, answers, testTime, onRetake, onEdit, onNew }: ResultsPr
 // ==========================================
 type RecentActivityProps = {
   quizzes: SavedQuiz[];
-  onView: (q: SavedQuiz) => void;
+  studyMaterials: StudyMaterialData[];
+  onViewQuiz: (q: SavedQuiz) => void;
+  onViewStudyMaterial: (m: StudyMaterialData) => void;
   onDownloadPdf: (name: string, mcqs: MCQ[]) => void;
   onDownloadDocx: (name: string, mcqs: MCQ[]) => void;
+  onDownloadStudyMaterialPdf: (m: StudyMaterialData) => void;
+  onDownloadStudyMaterialDocx: (m: StudyMaterialData) => void;
   onStartTest: (q: SavedQuiz) => void;
-  onRename: (id: string, name: string) => void;
-  onDuplicate: (q: SavedQuiz) => void;
-  onDelete: (id: string) => void;
+  onRenameQuiz: (id: string, name: string) => void;
+  onRenameStudyMaterial: (id: string, title: string) => void;
+  onDuplicateQuiz: (q: SavedQuiz) => void;
+  onDeleteQuiz: (id: string) => void;
+  onDeleteStudyMaterial: (id: string) => void;
 };
 
 function RecentActivity({
   quizzes,
-  onView,
+  studyMaterials,
+  onViewQuiz,
+  onViewStudyMaterial,
   onDownloadPdf,
   onDownloadDocx,
+  onDownloadStudyMaterialPdf,
+  onDownloadStudyMaterialDocx,
   onStartTest,
-  onRename,
-  onDuplicate,
-  onDelete,
+  onRenameQuiz,
+  onRenameStudyMaterial,
+  onDuplicateQuiz,
+  onDeleteQuiz,
+  onDeleteStudyMaterial,
 }: RecentActivityProps) {
+  const [activeType, setActiveType] = useState<"all" | "study-material" | "quiz">("all");
   const [search, setSearch] = useState("");
   const [langFilter, setLangFilter] = useState("All");
 
-  const filtered = useMemo(() => {
+  const filteredQuizzes = useMemo(() => {
     return quizzes
       .filter((q) => {
         const matchSearch = q.pdf_name.toLowerCase().includes(search.toLowerCase());
@@ -4369,25 +4870,88 @@ function RecentActivity({
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }, [quizzes, search, langFilter]);
 
+  const filteredStudyMaterials = useMemo(() => {
+    return studyMaterials
+      .filter((m) => {
+        const matchSearch =
+          (m.title || "").toLowerCase().includes(search.toLowerCase()) ||
+          (m.pdf_name || "").toLowerCase().includes(search.toLowerCase()) ||
+          m.chapters.some((c) => c.title.toLowerCase().includes(search.toLowerCase()));
+        const matchLang = langFilter === "All" || m.language === langFilter;
+        return matchSearch && matchLang;
+      })
+      .sort(
+        (a, b) =>
+          new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime(),
+      );
+  }, [studyMaterials, search, langFilter]);
+
   const languages = useMemo(() => {
-    const set = new Set(quizzes.map((q) => q.language));
+    const set = new Set([
+      ...quizzes.map((q) => q.language),
+      ...studyMaterials.map((m) => m.language || "English"),
+    ]);
     return ["All", ...Array.from(set)];
-  }, [quizzes]);
+  }, [quizzes, studyMaterials]);
+
+  const totalItemsCount =
+    (activeType === "all" || activeType === "quiz" ? filteredQuizzes.length : 0) +
+    (activeType === "all" || activeType === "study-material"
+      ? filteredStudyMaterials.length
+      : 0);
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div>
-        <h1 className="text-3xl font-extrabold tracking-tight">Recent Activity</h1>
-        <p className="text-muted-foreground mt-1">
-          Review, download, or test your knowledge on previously generated quizzes.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-extrabold tracking-tight">Recent Activity</h1>
+          <p className="text-muted-foreground mt-1">
+            Review, download, or edit your generated Study Notes and Quizzes.
+          </p>
+        </div>
+
+        {/* Content Type Filter Pills */}
+        <div className="inline-flex items-center gap-1.5 p-1 bg-card/60 rounded-xl border border-border text-xs font-semibold shrink-0">
+          <button
+            onClick={() => setActiveType("all")}
+            className={`px-3.5 py-1.5 rounded-lg transition-all ${
+              activeType === "all"
+                ? "bg-indigo-500/15 text-indigo-400 font-bold"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            All ({quizzes.length + studyMaterials.length})
+          </button>
+          <button
+            onClick={() => setActiveType("study-material")}
+            className={`px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
+              activeType === "study-material"
+                ? "bg-amber-500/15 text-amber-400 font-bold"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <GraduationCap className="h-3.5 w-3.5" />
+            <span>Study Notes ({studyMaterials.length})</span>
+          </button>
+          <button
+            onClick={() => setActiveType("quiz")}
+            className={`px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
+              activeType === "quiz"
+                ? "bg-purple-500/15 text-purple-400 font-bold"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <FileText className="h-3.5 w-3.5" />
+            <span>Quizzes ({quizzes.length})</span>
+          </button>
+        </div>
       </div>
 
       {/* Filters Bar */}
       <div className="flex flex-col sm:flex-row gap-3 bg-card/40 backdrop-blur-sm border border-border p-4 rounded-xl">
         <div className="flex-1 relative">
           <Input
-            placeholder="Search quizzes by source PDF..."
+            placeholder="Search by title, topic, or source PDF..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9 h-10 bg-background/50 text-sm"
@@ -4409,122 +4973,260 @@ function RecentActivity({
         </Select>
       </div>
 
-      {/* Quizzes List/Grid */}
-      {filtered.length === 0 ? (
+      {/* Content List/Grid */}
+      {totalItemsCount === 0 ? (
         <Card className="p-12 text-center bg-card/30 border border-border rounded-2xl flex flex-col items-center justify-center">
           <History className="h-10 w-10 text-muted-foreground/60 mb-4" />
-          <h3 className="text-lg font-bold tracking-tight">No quizzes found</h3>
+          <h3 className="text-lg font-bold tracking-tight">No activity found</h3>
           <p className="text-sm text-muted-foreground mt-1 max-w-sm">
-            Try adjusting your filters, or upload a new PDF to generate a quiz.
+            Try adjusting your filters, or upload a document to generate study material or quizzes.
           </p>
         </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
-          {filtered.map((quiz) => (
-            <Card
-              key={quiz.id}
-              className="p-5 bg-card/50 backdrop-blur-sm border-border hover:border-indigo-500/30 hover:shadow-md transition flex flex-col justify-between"
-            >
-              <div className="space-y-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex gap-2.5 items-center min-w-0">
-                    <FileText className="h-5 w-5 text-indigo-500 shrink-0" />
-                    <h3 className="font-bold tracking-tight truncate text-foreground text-sm md:text-base" title={quiz.pdf_name}>
-                      {quiz.pdf_name}
-                    </h3>
+          {/* Study Materials Cards */}
+          {(activeType === "all" || activeType === "study-material") &&
+            filteredStudyMaterials.map((material) => (
+              <Card
+                key={material.id}
+                className="p-5 bg-card/50 backdrop-blur-sm border-2 border-amber-500/20 hover:border-amber-500/40 hover:shadow-md transition flex flex-col justify-between"
+              >
+                <div className="space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex gap-2.5 items-center min-w-0">
+                      <div className="p-2 rounded-lg bg-amber-500/10 text-amber-400 shrink-0">
+                        <GraduationCap className="h-5 w-5" />
+                      </div>
+                      <div className="min-w-0">
+                        <h3
+                          className="font-bold tracking-tight truncate text-foreground text-sm md:text-base"
+                          title={material.title}
+                        >
+                          {material.title}
+                        </h3>
+                        <p className="text-xs text-muted-foreground truncate">{material.pdf_name}</p>
+                      </div>
+                    </div>
+                    <Badge
+                      variant="secondary"
+                      className="bg-amber-500/10 text-amber-400 border-amber-500/20 text-[10px] uppercase font-bold shrink-0"
+                    >
+                      {material.language || "English"}
+                    </Badge>
                   </div>
-                  <Badge variant="secondary" className="bg-indigo-500/10 text-indigo-400 border-indigo-500/20 text-[10px] uppercase font-bold shrink-0">
-                    {quiz.language}
-                  </Badge>
+
+                  <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
+                    <div>
+                      Chapters:{" "}
+                      <span className="font-semibold text-foreground">
+                        {material.chapters.length}
+                      </span>
+                    </div>
+                    <div>
+                      Points:{" "}
+                      <span className="font-semibold text-foreground">
+                        {material.total_points || 0}
+                      </span>
+                    </div>
+                    <div>
+                      Generated:{" "}
+                      <span className="font-semibold text-foreground">
+                        {new Date(material.created_at || Date.now()).toLocaleDateString()}{" "}
+                        {new Date(material.created_at || Date.now()).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                    </div>
+                  </div>
                 </div>
 
-                <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
-                  <div>
-                    Questions: <span className="font-semibold text-foreground">{quiz.num_questions}</span>
+                {/* Action Buttons for Study Material */}
+                <div className="mt-5 pt-4 border-t border-border/30 flex flex-wrap gap-2 justify-end">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onViewStudyMaterial(material)}
+                    className="gap-1.5 text-xs h-8 bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/20"
+                    title="View & Edit Notes"
+                  >
+                    <Eye className="h-3.5 w-3.5" /> View Notes
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onDownloadStudyMaterialPdf(material)}
+                    className="gap-1.5 text-xs h-8"
+                    title="Download Study Material PDF"
+                  >
+                    <Download className="h-3.5 w-3.5" /> PDF
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onDownloadStudyMaterialDocx(material)}
+                    className="gap-1.5 text-xs h-8"
+                    title="Download Word Document"
+                  >
+                    <Download className="h-3.5 w-3.5" /> DOCX
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const newTitle = prompt(
+                        "Enter new title for Study Material:",
+                        material.title,
+                      );
+                      if (newTitle && newTitle.trim()) {
+                        onRenameStudyMaterial(material.id, newTitle.trim());
+                      }
+                    }}
+                    className="gap-1.5 text-xs h-8 text-amber-400 hover:text-amber-500"
+                    title="Rename"
+                  >
+                    <Edit3 className="h-3.5 w-3.5" /> Rename
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      if (confirm("Are you sure you want to delete this study material?")) {
+                        onDeleteStudyMaterial(material.id);
+                      }
+                    }}
+                    className="gap-1.5 text-xs h-8 border-destructive/20 text-destructive hover:bg-destructive/10"
+                    title="Delete"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" /> Delete
+                  </Button>
+                </div>
+              </Card>
+            ))}
+
+          {/* Quizzes Cards */}
+          {(activeType === "all" || activeType === "quiz") &&
+            filteredQuizzes.map((quiz) => (
+              <Card
+                key={quiz.id}
+                className="p-5 bg-card/50 backdrop-blur-sm border-border hover:border-indigo-500/30 hover:shadow-md transition flex flex-col justify-between"
+              >
+                <div className="space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex gap-2.5 items-center min-w-0">
+                      <div className="p-2 rounded-lg bg-indigo-500/10 text-indigo-500 shrink-0">
+                        <FileText className="h-5 w-5" />
+                      </div>
+                      <h3
+                        className="font-bold tracking-tight truncate text-foreground text-sm md:text-base"
+                        title={quiz.pdf_name}
+                      >
+                        {quiz.pdf_name}
+                      </h3>
+                    </div>
+                    <Badge
+                      variant="secondary"
+                      className="bg-indigo-500/10 text-indigo-400 border-indigo-500/20 text-[10px] uppercase font-bold shrink-0"
+                    >
+                      {quiz.language}
+                    </Badge>
                   </div>
-                  <div>
-                    Generated: <span className="font-semibold text-foreground">{new Date(quiz.created_at).toLocaleDateString()} {new Date(quiz.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+
+                  <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
+                    <div>
+                      Questions:{" "}
+                      <span className="font-semibold text-foreground">{quiz.num_questions}</span>
+                    </div>
+                    <div>
+                      Generated:{" "}
+                      <span className="font-semibold text-foreground">
+                        {new Date(quiz.created_at).toLocaleDateString()}{" "}
+                        {new Date(quiz.created_at).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              {/* Action Buttons */}
-              <div className="mt-5 pt-4 border-t border-border/30 flex flex-wrap gap-2 justify-end">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => onView(quiz)}
-                  className="gap-1.5 text-xs h-8"
-                  title="View Questions"
-                >
-                  <Eye className="h-3.5 w-3.5" /> View
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => onStartTest(quiz)}
-                  className="gap-1.5 text-xs h-8 border-emerald-500/20 text-emerald-500 hover:bg-emerald-500/10"
-                  title="Start Mock Test"
-                >
-                  <Play className="h-3.5 w-3.5" /> Test
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => onDownloadPdf(quiz.pdf_name, quiz.questions)}
-                  className="gap-1.5 text-xs h-8"
-                  title="Download PDF"
-                >
-                  <Download className="h-3.5 w-3.5" /> PDF
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => onDownloadDocx(quiz.pdf_name, quiz.questions)}
-                  className="gap-1.5 text-xs h-8"
-                  title="Download Word (DOCX)"
-                >
-                  <Download className="h-3.5 w-3.5" /> DOCX
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    const newName = prompt("Enter new name for the quiz:", quiz.pdf_name);
-                    if (newName && newName.trim()) {
-                      onRename(quiz.id, newName.trim());
-                    }
-                  }}
-                  className="gap-1.5 text-xs h-8 text-indigo-400 hover:text-indigo-500"
-                  title="Rename"
-                >
-                  <Edit3 className="h-3.5 w-3.5" /> Rename
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => onDuplicate(quiz)}
-                  className="gap-1.5 text-xs h-8"
-                  title="Duplicate"
-                >
-                  <Copy className="h-3.5 w-3.5" /> Duplicate
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    if (confirm("Are you sure you want to delete this quiz?")) {
-                      onDelete(quiz.id);
-                    }
-                  }}
-                  className="gap-1.5 text-xs h-8 border-destructive/20 text-destructive hover:bg-destructive/10"
-                  title="Delete"
-                >
-                  <Trash2 className="h-3.5 w-3.5" /> Delete
-                </Button>
-              </div>
-            </Card>
-          ))}
+                {/* Action Buttons for Quiz */}
+                <div className="mt-5 pt-4 border-t border-border/30 flex flex-wrap gap-2 justify-end">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onViewQuiz(quiz)}
+                    className="gap-1.5 text-xs h-8"
+                    title="View Questions"
+                  >
+                    <Eye className="h-3.5 w-3.5" /> View
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onStartTest(quiz)}
+                    className="gap-1.5 text-xs h-8 border-emerald-500/20 text-emerald-500 hover:bg-emerald-500/10"
+                    title="Start Mock Test"
+                  >
+                    <Play className="h-3.5 w-3.5" /> Test
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onDownloadPdf(quiz.pdf_name, quiz.questions)}
+                    className="gap-1.5 text-xs h-8"
+                    title="Download PDF"
+                  >
+                    <Download className="h-3.5 w-3.5" /> PDF
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onDownloadDocx(quiz.pdf_name, quiz.questions)}
+                    className="gap-1.5 text-xs h-8"
+                    title="Download Word (DOCX)"
+                  >
+                    <Download className="h-3.5 w-3.5" /> DOCX
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const newName = prompt("Enter new name for the quiz:", quiz.pdf_name);
+                      if (newName && newName.trim()) {
+                        onRenameQuiz(quiz.id, newName.trim());
+                      }
+                    }}
+                    className="gap-1.5 text-xs h-8 text-indigo-400 hover:text-indigo-500"
+                    title="Rename"
+                  >
+                    <Edit3 className="h-3.5 w-3.5" /> Rename
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onDuplicateQuiz(quiz)}
+                    className="gap-1.5 text-xs h-8"
+                    title="Duplicate"
+                  >
+                    <Copy className="h-3.5 w-3.5" /> Duplicate
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      if (confirm("Are you sure you want to delete this quiz?")) {
+                        onDeleteQuiz(quiz.id);
+                      }
+                    }}
+                    className="gap-1.5 text-xs h-8 border-destructive/20 text-destructive hover:bg-destructive/10"
+                    title="Delete"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" /> Delete
+                  </Button>
+                </div>
+              </Card>
+            ))}
         </div>
       )}
     </div>
