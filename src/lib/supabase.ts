@@ -9,11 +9,19 @@ export const getSupabaseConfig = () => {
   }
 
   // Frontend environment
-  const envUrl = (import.meta as any).env.VITE_SUPABASE_URL || "";
-  const envKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY || "";
+  const envUrl = (import.meta as any)?.env?.VITE_SUPABASE_URL || "";
+  const envKey = (import.meta as any)?.env?.VITE_SUPABASE_ANON_KEY || "";
 
-  const localUrl = localStorage.getItem("quizcrack_supabase_url") || "";
-  const localKey = localStorage.getItem("quizcrack_supabase_key") || "";
+  let localUrl = "";
+  let localKey = "";
+  try {
+    if (typeof localStorage !== "undefined") {
+      localUrl = localStorage.getItem("quizcrack_supabase_url") || "";
+      localKey = localStorage.getItem("quizcrack_supabase_key") || "";
+    }
+  } catch {
+    // Storage restricted or unavailable
+  }
 
   return {
     url: envUrl || localUrl,
@@ -22,16 +30,19 @@ export const getSupabaseConfig = () => {
 };
 
 export const getSupabaseClient = () => {
-  const { url, key } = getSupabaseConfig();
-  if (url && key) {
-    let cleanUrl = url.trim();
-    if (cleanUrl.endsWith("/rest/v1/")) {
-      cleanUrl = cleanUrl.slice(0, -9);
-    } else if (cleanUrl.endsWith("/rest/v1")) {
-      cleanUrl = cleanUrl.slice(0, -8);
+  try {
+    const { url, key } = getSupabaseConfig();
+    if (url && key && url.trim().length > 0 && key.trim().length > 0) {
+      let cleanUrl = url.trim();
+      if (cleanUrl.endsWith("/rest/v1/")) {
+        cleanUrl = cleanUrl.slice(0, -9);
+      } else if (cleanUrl.endsWith("/rest/v1")) {
+        cleanUrl = cleanUrl.slice(0, -8);
+      }
+      return createClient(cleanUrl, key.trim());
     }
-    return createClient(cleanUrl, key);
+  } catch (err) {
+    console.warn("Could not initialize Supabase client:", err);
   }
   return null;
 };
-

@@ -417,7 +417,11 @@ const generateExamPdf = (
           for (let i = 0; i < len; i++) {
             binary += String.fromCharCode(bytes[i]);
           }
-          return window.btoa(binary);
+          return typeof btoa !== "undefined"
+            ? btoa(binary)
+            : typeof Buffer !== "undefined"
+            ? Buffer.from(binary, "binary").toString("base64")
+            : null;
         } catch {
           // try next URL
         }
@@ -858,6 +862,32 @@ function App() {
   const [globalUploadStage, setGlobalUploadStage] = useState("");
   const globalFileInputRef = useRef<HTMLInputElement>(null);
 
+  // Safe local storage helpers for SSR and restricted browser contexts
+  const safeGetItem = useCallback((key: string): string | null => {
+    try {
+      if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
+        return localStorage.getItem(key);
+      }
+    } catch {}
+    return null;
+  }, []);
+
+  const safeSetItem = useCallback((key: string, value: string) => {
+    try {
+      if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
+        localStorage.setItem(key, value);
+      }
+    } catch {}
+  }, []);
+
+  const safeRemoveItem = useCallback((key: string) => {
+    try {
+      if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
+        localStorage.removeItem(key);
+      }
+    } catch {}
+  }, []);
+
   // Initialize Supabase & Auth listener
   useEffect(() => {
     const client = getSupabaseClient();
@@ -887,7 +917,7 @@ function App() {
 
   const fetchQuizzes = async (currentUser: any, client: any) => {
     if (!client || !currentUser) {
-      const local = localStorage.getItem("quizcrack_quizzes");
+      const local = safeGetItem("quizcrack_quizzes");
       if (local) {
         try { setRecentQuizzes(JSON.parse(local)); } catch (e) {}
       } else {
@@ -905,7 +935,7 @@ function App() {
       setRecentQuizzes(data || []);
     } catch (e) {
       console.error("Error fetching quizzes:", e);
-      const local = localStorage.getItem("quizcrack_quizzes");
+      const local = safeGetItem("quizcrack_quizzes");
       if (local) {
         try { setRecentQuizzes(JSON.parse(local)); } catch (e) {}
       }
@@ -914,7 +944,7 @@ function App() {
 
   const fetchStudyMaterials = async (currentUser: any, client: any) => {
     if (!client || !currentUser) {
-      const local = localStorage.getItem("quizcrack_study_materials");
+      const local = safeGetItem("quizcrack_study_materials");
       if (local) {
         try { setRecentStudyMaterials(JSON.parse(local)); } catch (e) {}
       } else {
@@ -932,7 +962,7 @@ function App() {
       setRecentStudyMaterials(data || []);
     } catch (e) {
       console.error("Error fetching study materials:", e);
-      const local = localStorage.getItem("quizcrack_study_materials");
+      const local = safeGetItem("quizcrack_study_materials");
       if (local) {
         try { setRecentStudyMaterials(JSON.parse(local)); } catch (e) {}
       }
@@ -941,7 +971,7 @@ function App() {
 
   const fetchAttempts = async (currentUser: any, client: any) => {
     if (!client || !currentUser) {
-      const local = localStorage.getItem("quizcrack_mock_attempts");
+      const local = safeGetItem("quizcrack_mock_attempts");
       if (local) {
         try { setMockAttempts(JSON.parse(local)); } catch (e) {}
       } else {
@@ -959,7 +989,7 @@ function App() {
       setMockAttempts(data || []);
     } catch (e) {
       console.error("Error fetching attempts:", e);
-      const local = localStorage.getItem("quizcrack_mock_attempts");
+      const local = safeGetItem("quizcrack_mock_attempts");
       if (local) {
         try { setMockAttempts(JSON.parse(local)); } catch (e) {}
       }
@@ -981,13 +1011,13 @@ function App() {
     };
 
     // Save locally
-    const local = localStorage.getItem("quizcrack_quizzes");
+    const local = safeGetItem("quizcrack_quizzes");
     let currentLocal: SavedQuiz[] = [];
     if (local) {
       try { currentLocal = JSON.parse(local); } catch (e) {}
     }
     const updatedLocal = [newQuiz, ...currentLocal];
-    localStorage.setItem("quizcrack_quizzes", JSON.stringify(updatedLocal));
+    safeSetItem("quizcrack_quizzes", JSON.stringify(updatedLocal));
     setRecentQuizzes(updatedLocal);
 
     // Save to Supabase if logged in
@@ -1017,13 +1047,13 @@ function App() {
 
   const saveGeneratedStudyMaterial = async (materialData: StudyMaterialData) => {
     // Save locally
-    const local = localStorage.getItem("quizcrack_study_materials");
+    const local = safeGetItem("quizcrack_study_materials");
     let currentLocal: StudyMaterialData[] = [];
     if (local) {
       try { currentLocal = JSON.parse(local); } catch (e) {}
     }
     const updatedLocal = [materialData, ...currentLocal.filter((m) => m.id !== materialData.id)];
-    localStorage.setItem("quizcrack_study_materials", JSON.stringify(updatedLocal));
+    safeSetItem("quizcrack_study_materials", JSON.stringify(updatedLocal));
     setRecentStudyMaterials(updatedLocal);
 
     // Save to Supabase if logged in
@@ -1055,7 +1085,7 @@ function App() {
   const renameStudyMaterial = async (id: string, newTitle: string) => {
     const updated = recentStudyMaterials.map((m) => (m.id === id ? { ...m, title: newTitle } : m));
     setRecentStudyMaterials(updated);
-    localStorage.setItem("quizcrack_study_materials", JSON.stringify(updated));
+    safeSetItem("quizcrack_study_materials", JSON.stringify(updated));
 
     if (user && supabaseClient && isUuid(id)) {
       try {
@@ -1077,11 +1107,13 @@ function App() {
   const deleteStudyMaterial = async (id: string) => {
     const updated = recentStudyMaterials.filter((m) => m.id !== id);
     setRecentStudyMaterials(updated);
-    localStorage.setItem("quizcrack_study_materials", JSON.stringify(updated));
+    safeSetItem("quizcrack_study_materials", JSON.stringify(updated));
 
     if (user && supabaseClient && isUuid(id)) {
       try {
-        const { error } = await supabaseClient.from("study_materials").delete().eq("id", id);
+        const { error } = await supabaseClient
+          .from("study_materials")
+          .delete().eq("id", id);
         if (error) throw error;
         toast.success("Study Material deleted successfully!");
       } catch (e) {
@@ -1112,13 +1144,13 @@ function App() {
     };
 
     // Save locally
-    const local = localStorage.getItem("quizcrack_mock_attempts");
+    const local = safeGetItem("quizcrack_mock_attempts");
     let currentLocal: MockTestAttempt[] = [];
     if (local) {
       try { currentLocal = JSON.parse(local); } catch (e) {}
     }
     const updatedLocal = [newAttempt, ...currentLocal];
-    localStorage.setItem("quizcrack_mock_attempts", JSON.stringify(updatedLocal));
+    safeSetItem("quizcrack_mock_attempts", JSON.stringify(updatedLocal));
     setMockAttempts(updatedLocal);
 
     // Save to Supabase
@@ -1143,7 +1175,7 @@ function App() {
   const renameQuiz = async (id: string, newName: string) => {
     const updated = recentQuizzes.map((q) => (q.id === id ? { ...q, pdf_name: newName } : q));
     setRecentQuizzes(updated);
-    localStorage.setItem("quizcrack_quizzes", JSON.stringify(updated));
+    safeSetItem("quizcrack_quizzes", JSON.stringify(updated));
 
     if (user && supabaseClient && isUuid(id)) {
       try {
@@ -1174,7 +1206,7 @@ function App() {
 
     const updated = [duplicatedQuiz, ...recentQuizzes];
     setRecentQuizzes(updated);
-    localStorage.setItem("quizcrack_quizzes", JSON.stringify(updated));
+    safeSetItem("quizcrack_quizzes", JSON.stringify(updated));
 
     if (user && supabaseClient) {
       try {
@@ -1207,7 +1239,7 @@ function App() {
   const deleteQuiz = async (id: string) => {
     const updated = recentQuizzes.filter((q) => q.id !== id);
     setRecentQuizzes(updated);
-    localStorage.setItem("quizcrack_quizzes", JSON.stringify(updated));
+    safeSetItem("quizcrack_quizzes", JSON.stringify(updated));
 
     if (user && supabaseClient && isUuid(id)) {
       try {
@@ -1430,16 +1462,16 @@ function App() {
 
   // Load stats & settings from localStorage
   useEffect(() => {
-    const savedStats = localStorage.getItem("quizcrack_stats");
+    const savedStats = safeGetItem("quizcrack_stats");
     if (savedStats) {
       try {
         setStats(JSON.parse(savedStats));
       } catch (e) {}
     }
-    const savedApiKey = localStorage.getItem("quizcrack_apikey");
-    const savedProvider = localStorage.getItem("quizcrack_provider");
-    const savedModel = localStorage.getItem("quizcrack_model");
-    const savedTheme = localStorage.getItem("quizcrack_theme");
+    const savedApiKey = safeGetItem("quizcrack_apikey");
+    const savedProvider = safeGetItem("quizcrack_provider");
+    const savedModel = safeGetItem("quizcrack_model");
+    const savedTheme = safeGetItem("quizcrack_theme");
 
     if (savedApiKey) setApiKey(savedApiKey);
     if (savedProvider) setApiProvider(savedProvider as any);
@@ -1447,28 +1479,32 @@ function App() {
 
     const isDark = savedTheme !== "light";
     setDarkMode(isDark);
-    if (isDark) {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
+    if (typeof document !== "undefined") {
+      if (isDark) {
+        document.documentElement.classList.add("dark");
+      } else {
+        document.documentElement.classList.remove("dark");
+      }
     }
-  }, []);
+  }, [safeGetItem]);
 
   const toggleTheme = () => {
     const nextDark = !darkMode;
     setDarkMode(nextDark);
-    localStorage.setItem("quizcrack_theme", nextDark ? "dark" : "light");
-    if (nextDark) {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
+    safeSetItem("quizcrack_theme", nextDark ? "dark" : "light");
+    if (typeof document !== "undefined") {
+      if (nextDark) {
+        document.documentElement.classList.add("dark");
+      } else {
+        document.documentElement.classList.remove("dark");
+      }
     }
   };
 
   const updateStats = (updater: (prev: DashboardStats) => DashboardStats) => {
     setStats((prev) => {
       const next = updater(prev);
-      localStorage.setItem("quizcrack_stats", JSON.stringify(next));
+      safeSetItem("quizcrack_stats", JSON.stringify(next));
       return next;
     });
   };
@@ -1805,7 +1841,7 @@ function App() {
                 }
               }}
               onResetStats={() => {
-                localStorage.removeItem("quizcrack_stats");
+                safeRemoveItem("quizcrack_stats");
                 setStats(DEFAULT_STATS);
                 toast.success("Dashboard metrics reset.");
               }}
@@ -1895,17 +1931,17 @@ function App() {
               apiKey={apiKey}
               setApiKey={(k) => {
                 setApiKey(k);
-                localStorage.setItem("quizcrack_apikey", k);
+                safeSetItem("quizcrack_apikey", k);
               }}
               apiProvider={apiProvider}
               setApiProvider={(p) => {
                 setApiProvider(p);
-                localStorage.setItem("quizcrack_provider", p);
+                safeSetItem("quizcrack_provider", p);
               }}
               modelName={modelName}
               setModelName={(m) => {
                 setModelName(m);
-                localStorage.setItem("quizcrack_model", m);
+                safeSetItem("quizcrack_model", m);
               }}
             />
           )}
@@ -1998,7 +2034,7 @@ function App() {
               }}
               onResetAttempts={() => {
                 setMockAttempts([]);
-                localStorage.removeItem("quizcrack_mock_attempts");
+                safeRemoveItem("quizcrack_mock_attempts");
                 if (user && supabaseClient) {
                   supabaseClient.from("mock_attempts").delete().eq("user_id", user.id).then();
                 }
@@ -2021,10 +2057,14 @@ function App() {
                 }
               }}
               onSaveSupabaseConfig={(url, key) => {
-                localStorage.setItem("quizcrack_supabase_url", url);
-                localStorage.setItem("quizcrack_supabase_key", key);
+                safeSetItem("quizcrack_supabase_url", url);
+                safeSetItem("quizcrack_supabase_key", key);
                 toast.success("Supabase credentials saved locally. Reloading page...");
-                setTimeout(() => window.location.reload(), 1000);
+                setTimeout(() => {
+                  if (typeof window !== "undefined") {
+                    window.location.reload();
+                  }
+                }, 1000);
               }}
             />
           )}

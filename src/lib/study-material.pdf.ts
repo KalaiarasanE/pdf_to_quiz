@@ -95,7 +95,12 @@ export async function generateStudyMaterialPdf(
             for (let i = 0; i < len; i++) {
               binary += String.fromCharCode(bytes[i]);
             }
-            base64Font = window.btoa(binary);
+            base64Font =
+              typeof btoa !== "undefined"
+                ? btoa(binary)
+                : typeof Buffer !== "undefined"
+                ? Buffer.from(binary, "binary").toString("base64")
+                : null;
             break;
           }
         } catch {
