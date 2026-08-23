@@ -1,7 +1,14 @@
-import { StudyMaterialChapter, StudyMaterialData, StudyMaterialSection, StudyMaterialStreamProgress } from "./study-material.types";
+import {
+  StudyMaterialChapter,
+  StudyMaterialData,
+  StudyMaterialSection,
+  StudyMaterialStreamProgress,
+} from "./study-material.types";
 
 export interface StudyMaterialConfig {
-  text: string;
+  text?: string;
+  pageList?: { pageNum: number; text: string }[];
+  totalPages?: number;
   pdfName: string;
   apiKey?: string;
   apiProvider?: "gemini" | "openai" | "lovable";
@@ -10,11 +17,21 @@ export interface StudyMaterialConfig {
   selectedLanguage?: string;
 }
 
+interface PageChunk {
+  chunkIndex: number;
+  chapterNumber: number;
+  sourcePagesLabel: string;
+  text: string;
+  pageCount: number;
+}
+
 export async function* generateStudyMaterialStream(
-  config: StudyMaterialConfig
+  config: StudyMaterialConfig,
 ): AsyncGenerator<StudyMaterialStreamProgress, void, unknown> {
   const {
-    text,
+    text = "",
+    pageList = [],
+    totalPages,
     pdfName,
     apiKey,
     apiProvider = "gemini",
@@ -32,7 +49,116 @@ export async function* generateStudyMaterialStream(
 
   yield {
     stage: "analyzing",
-    message: "AI analyzing complete document structure and concepts...",
+    message: "Analyzing full document structure and extracting all page content...",
+  };
+
+  // 1. Prepare Page Chunks with Strict Full Document Coverage
+  const chunks: PageChunk[] = [];
+
+  if (pageList && pageList.length > 0) {
+    const totalPagesCount = pageList.length;
+    // Step size based on document length to ensure deep, exhaustive notes
+    let step = 1;
+    if (totalPagesCount > 40) step = 4;
+    else if (totalPagesCount > 18) step = 3;
+    else if (totalPagesCount > 6) step = 2;
+    else step = 1; // 1 page per chunk for short documents (<=6 pages) for maximum detail
+
+    let chunkIdx = 0;
+    for (let p = 0; p < totalPagesCount; p += step) {
+      const pageSlice = pageList.slice(p, p + step);
+      const startPage = pageSlice[0].pageNum;
+      const endPage = pageSlice[pageSlice.length - 1].pageNum;
+      const sourcePagesLabel =
+        startPage === endPage ? `Page ${startPage}` : `Pages ${startPage}–${endPage}`;
+
+      const chunkText = pageSlice
+        .map((page) => `--- [PAGE ${page.pageNum} OF ${totalPagesCount}] ---\n${page.text}`)
+        .join("\n\n");
+
+      // Only add chunk if it has extractable content
+      if (chunkText.trim().length > 20) {
+        chunkIdx++;
+        chunks.push({
+          chunkIndex: chunkIdx,
+          chapterNumber: chunkIdx,
+          sourcePagesLabel,
+          text: chunkText,
+          pageCount: pageSlice.length,
+        });
+      }
+    }
+  } else {
+    // Break raw text by page markers or paragraph blocks (~3500 chars per chunk)
+    const MAX_CHUNK_CHARS = 4000;
+    const pageDelimiters = text.split(/(?:--- Page \d+ ---|\n\s*---\s*\n|\f)/i);
+
+    if (pageDelimiters.length > 1) {
+      let chunkIdx = 0;
+      for (let i = 0; i < pageDelimiters.length; i++) {
+        const pText = pageDelimiters[i].trim();
+        if (pText.length > 30) {
+          chunkIdx++;
+          chunks.push({
+            chunkIndex: chunkIdx,
+            chapterNumber: chunkIdx,
+            sourcePagesLabel: `Section ${chunkIdx}`,
+            text: pText,
+            pageCount: 1,
+          });
+        }
+      }
+    } else {
+      const paragraphs = text.split(/\n\s*\n/);
+      let currentChunkText = "";
+      let chunkIdx = 0;
+
+      for (const p of paragraphs) {
+        if ((currentChunkText + "\n\n" + p).length > MAX_CHUNK_CHARS && currentChunkText.length > 0) {
+          chunkIdx++;
+          chunks.push({
+            chunkIndex: chunkIdx,
+            chapterNumber: chunkIdx,
+            sourcePagesLabel: `Section ${chunkIdx}`,
+            text: currentChunkText.trim(),
+            pageCount: 1,
+          });
+          currentChunkText = p;
+        } else {
+          currentChunkText += (currentChunkText ? "\n\n" : "") + p;
+        }
+      }
+
+      if (currentChunkText.trim()) {
+        chunkIdx++;
+        chunks.push({
+          chunkIndex: chunkIdx,
+          chapterNumber: chunkIdx,
+          sourcePagesLabel: `Section ${chunkIdx}`,
+          text: currentChunkText.trim(),
+          pageCount: 1,
+        });
+      }
+    }
+  }
+
+  // Fallback if no chunks generated
+  if (chunks.length === 0) {
+    chunks.push({
+      chunkIndex: 1,
+      chapterNumber: 1,
+      sourcePagesLabel: "Complete Document",
+      text: text || "Educational content",
+      pageCount: totalPages || 1,
+    });
+  }
+
+  const docTotalPages = totalPages || pageList.length || chunks.length;
+
+  yield {
+    stage: "detecting_chapters",
+    message: `Identified ${docTotalPages} pages across ${chunks.length} structured chapters. Processing all content...`,
+    totalChapters: chunks.length,
   };
 
   // Language instructions
@@ -41,66 +167,31 @@ export async function* generateStudyMaterialStream(
       ? `You MUST write the entire study material in Tanglish (Tamil language written phonetically using standard Latin/English alphabet). Rules for Tanglish: Do NOT use Tamil Unicode characters. Translate Tamil vocabulary and sentence structure into Latin letters phonetically (e.g., "India oda capital Delhi", "1773 la Regulating Act kondu vandhanga"). Maintain clear, natural, and standard Tanglish suitable for competitive exam revision.`
       : selectedLanguage && selectedLanguage !== "mixed"
       ? `You MUST write the entire study material in "${selectedLanguage}" language.`
-      : `You MUST detect the primary language of the uploaded document (e.g., Tamil, English, Hindi, Telugu, etc.) and write the entire study material in the EXACT same language as the uploaded document. For example, if the document is in Tamil, output Tamil Unicode. Never translate unless the user explicitly requests translation. Use proper Unicode without corrupted characters.` ;
+      : `You MUST detect the primary language of the uploaded document (e.g., Tamil, English, Hindi, Telugu, etc.) and write the entire study material in the EXACT same language as the uploaded document. For example, if the document is in Tamil, output proper Tamil Unicode. Never translate unless the user explicitly requests translation. Use proper Unicode without corrupted characters.`;
 
-  // Split text into chunks if very large (e.g. > 45000 chars)
-  const MAX_CHUNK_CHARS = 45000;
-  const chunks: string[] = [];
-  
-  if (text.length <= MAX_CHUNK_CHARS) {
-    chunks.push(text);
-  } else {
-    // Break by double newlines or pages
-    const paragraphs = text.split(/\n\s*\n/);
-    let currentChunk = "";
-    for (const p of paragraphs) {
-      if ((currentChunk + "\n\n" + p).length > MAX_CHUNK_CHARS && currentChunk.length > 0) {
-        chunks.push(currentChunk.trim());
-        currentChunk = p;
-      } else {
-        currentChunk += (currentChunk ? "\n\n" : "") + p;
-      }
-    }
-    if (currentChunk.trim()) {
-      chunks.push(currentChunk.trim());
-    }
-  }
-
-  yield {
-    stage: "detecting_chapters",
-    message: `Identified ${chunks.length > 1 ? `${chunks.length} major sections` : "document content"}. Extracting structured notes...`,
-    totalChapters: chunks.length,
-  };
-
-  const completedChapters: StudyMaterialChapter[] = [];
   let globalDocTitle = pdfName.replace(/\.(pdf|docx?)$/i, "").replace(/[_-]/g, " ");
+  const completedChaptersMap = new Map<number, StudyMaterialChapter>();
 
-  for (let i = 0; i < chunks.length; i++) {
-    const chunkText = chunks[i];
-    const chapterNum = i + 1;
+  // Process chunks sequentially or in parallel batches with maximum depth
+  const concurrency = Math.min(3, chunks.length);
+  let nextChunkIdx = 0;
 
-    yield {
-      stage: "generating_chapter",
-      message: `Creating Study Material for ${chunks.length > 1 ? `Chapter ${chapterNum}` : "document"}...`,
-      currentChapter: chapterNum,
-      totalChapters: chunks.length,
-      completedChapters: [...completedChapters],
-    };
+  async function processChunk(chunk: PageChunk): Promise<{ chapter: StudyMaterialChapter; docTitle?: string }> {
+    const systemPrompt = `You are a world-class educational author and competitive exam preparation expert (UPSC, TNPSC, SSC, State PSCs, University Exams).
+Your mission is to transform raw PDF page content into comprehensive, high-yield, exam-oriented study material that students can rapidly study and revise.
 
-    const systemPrompt = `You are a world-class educational author and competitive exam preparation expert (UPSC, TNPSC, SSC, State PSCs).
-Your mission is to transform raw PDF theory text into concise, high-yield, exam-oriented study material that students can rapidly read and revise.
-
-CRITICAL RULES:
-1. DO NOT summarize into long paragraphs.
-2. Convert all content into short points, bullet points, numbered subpoints, key facts, highlight definitions, important dates, key personalities, and rapid-revision pairs.
-3. LANGUAGE RULE: ${languageInstruction}
-4. DO NOT invent facts, outside details, or hallucinate. Use ONLY facts directly provided in the text.
-5. PRESERVE all dates, numbers, statutory acts, names, scientific terms, formulas, and percentages with 100% accuracy.
-6. STRUCTURE TO INCLUDE (Only include sections that are actually relevant to the content; DO NOT create empty sections):
-   - "introduction": Short 2-3 sentence overview of topic significance.
-   - "concepts": Key principles/theories broken down into structured bullet points with subheadings.
+CRITICAL FULL-PAGE COVERAGE RULES:
+1. DO NOT summarize or compress this content into a brief 1-page summary.
+2. The user has specifically requested FULL coverage of EVERY page in this document.
+3. Read EVERY concept, theory, statutory act, constitutional article, historical event, formula, percentage, date, definition, and example on the provided page(s).
+4. Convert all long paragraphs into structured, easy-to-read study points with subheadings.
+5. PRESERVE 100% of all facts, dates, names, scientific terms, formulas, and definitions. ZERO content loss.
+6. LANGUAGE RULE: ${languageInstruction}
+7. STRUCTURE TO INCLUDE (Only include sections that are actually relevant to the content; DO NOT create empty sections):
+   - "introduction": 2-3 sentence overview of this specific chapter/topic's significance.
+   - "concepts": Key principles/theories broken down into structured bullet points with bold subheadings.
    - "points": Core factual points and analytical takeaways.
-   - "facts": Key facts, numbers, statistics, constitutional articles, or scientific values.
+   - "facts": Specific data points, numbers, statistics, constitutional articles, or scientific values.
    - "dates": Chronological timeline of important dates & historical milestones (with date and event description).
    - "people": Important personalities, authors, scientists, leaders with their key contribution.
    - "definitions": Concise technical / conceptual definitions.
@@ -114,9 +205,9 @@ Return STRICT JSON ONLY. No markdown wrappers (\`\`\`json), no commentary.
 
 The JSON MUST conform to this exact schema:
 {
-  "documentTitle": "Main Title of the Study Material",
-  "chapterTitle": "Chapter or Section Title",
-  "summary": "1-2 line concise summary",
+  "documentTitle": "Main Title of the Complete Study Material",
+  "chapterTitle": "Specific Chapter/Topic Title for ${chunk.sourcePagesLabel}",
+  "summary": "1-2 line concise summary of this chapter",
   "sections": [
     {
       "id": "sec-1",
@@ -137,10 +228,10 @@ The JSON MUST conform to this exact schema:
   ]
 }`;
 
-    const prompt = `Analyze this text content (Part ${chapterNum} of ${chunks.length}) and generate structured, exam-oriented study material:
+    const prompt = `Process and convert all educational content from ${chunk.sourcePagesLabel} (Part ${chunk.chapterNumber} of ${chunks.length}) into comprehensive, high-yield study material:
 
 """
-${chunkText}
+${chunk.text}
 """`;
 
     let chapterData: any = null;
@@ -160,52 +251,87 @@ ${chunkText}
       const cleanJson = extractJson(rawResponse);
       chapterData = JSON.parse(cleanJson);
     } catch (err) {
-      console.error(`AI call failed for chapter ${chapterNum}:`, err);
-      // Fallback: create a basic structured chapter from the text if AI fails
-      chapterData = createFallbackChapter(chunkText, chapterNum, globalDocTitle);
+      console.error(`AI call failed for chapter ${chunk.chapterNumber}:`, err);
+      chapterData = createFallbackChapter(chunk.text, chunk.chapterNumber, globalDocTitle, chunk.sourcePagesLabel);
     }
 
-    if (chapterData) {
-      if (chapterData.documentTitle && i === 0) {
-        globalDocTitle = chapterData.documentTitle;
-      }
-
-      const validatedChapter: StudyMaterialChapter = {
-        chapterNumber: chapterNum,
-        chapterTitle: chapterData.chapterTitle || `Chapter ${chapterNum}: ${globalDocTitle}`,
-        summary: chapterData.summary || "",
-        sections: Array.isArray(chapterData.sections)
+    const validatedChapter: StudyMaterialChapter = {
+      chapterNumber: chunk.chapterNumber,
+      chapterTitle:
+        chapterData?.chapterTitle ||
+        `Chapter ${chunk.chapterNumber}: ${chunk.sourcePagesLabel} Notes`,
+      summary: chapterData?.summary || "",
+      sourcePages: chunk.sourcePagesLabel,
+      sections:
+        Array.isArray(chapterData?.sections) && chapterData.sections.length > 0
           ? chapterData.sections.filter((s: any) => isValidSection(s))
-          : [],
-      };
+          : createFallbackChapter(chunk.text, chunk.chapterNumber, globalDocTitle, chunk.sourcePagesLabel).sections,
+    };
 
-      // Ensure at least one section exists
-      if (validatedChapter.sections.length === 0) {
-        validatedChapter.sections = createFallbackChapter(chunkText, chapterNum, globalDocTitle).sections;
+    return {
+      chapter: validatedChapter,
+      docTitle: chapterData?.documentTitle,
+    };
+  }
+
+  // Execute processing with live streaming updates
+  while (nextChunkIdx < chunks.length) {
+    const batchSize = Math.min(concurrency, chunks.length - nextChunkIdx);
+    const currentBatch = chunks.slice(nextChunkIdx, nextChunkIdx + batchSize);
+    nextChunkIdx += batchSize;
+
+    yield {
+      stage: "generating_chapter",
+      message: `Creating Study Material for ${currentBatch.map((c) => c.sourcePagesLabel).join(", ")}...`,
+      currentChapter: currentBatch[0].chapterNumber,
+      totalChapters: chunks.length,
+      completedChapters: Array.from(completedChaptersMap.values()),
+    };
+
+    const results = await Promise.all(currentBatch.map((c) => processChunk(c)));
+
+    for (let r = 0; r < results.length; r++) {
+      const { chapter, docTitle } = results[r];
+      if (docTitle && globalDocTitle === pdfName.replace(/\.(pdf|docx?)$/i, "").replace(/[_-]/g, " ")) {
+        globalDocTitle = docTitle;
       }
+      completedChaptersMap.set(chapter.chapterNumber, chapter);
 
-      completedChapters.push(validatedChapter);
+      // Count study points in this chapter
+      let chapterPoints = 0;
+      for (const sec of chapter.sections) {
+        if (sec.items) chapterPoints += sec.items.length;
+        if (sec.keyFactList) chapterPoints += sec.keyFactList.length;
+        if (sec.dateList) chapterPoints += sec.dateList.length;
+        if (sec.definitionList) chapterPoints += sec.definitionList.length;
+        if (sec.quickRevisionList) chapterPoints += sec.quickRevisionList.length;
+      }
 
       yield {
         stage: "generating_chapter",
-        message: `✓ Chapter ${chapterNum} completed (${validatedChapter.sections.length} sections created)`,
-        currentChapter: chapterNum,
+        message: `✓ Chapter ${chapter.chapterNumber} (${chapter.sourcePages || `Part ${chapter.chapterNumber}`}): ${chapter.chapterTitle} completed (${chapterPoints} points)`,
+        currentChapter: chapter.chapterNumber,
         totalChapters: chunks.length,
-        chapterTitle: validatedChapter.chapterTitle,
-        completedChapters: [...completedChapters],
+        chapterTitle: chapter.chapterTitle,
+        completedChapters: Array.from(completedChaptersMap.values()),
       };
     }
   }
 
+  // Sort chapters chronologically
+  const finalChapters = Array.from(completedChaptersMap.values()).sort(
+    (a, b) => a.chapterNumber - b.chapterNumber,
+  );
+
   yield {
     stage: "finalizing",
-    message: "Generating Final Study Material...",
-    completedChapters,
+    message: `Finalizing complete Study Material covering all ${docTotalPages} pages...`,
+    completedChapters: finalChapters,
   };
 
   // Calculate total points and read time
   let totalPointsCount = 0;
-  for (const ch of completedChapters) {
+  for (const ch of finalChapters) {
     for (const sec of ch.sections) {
       if (sec.items) totalPointsCount += sec.items.length;
       if (sec.keyFactList) totalPointsCount += sec.keyFactList.length;
@@ -217,24 +343,25 @@ ${chunkText}
     }
   }
 
-  const estimatedReadTime = Math.max(2, Math.round(totalPointsCount * 0.4));
+  const estimatedReadTime = Math.max(2, Math.round(totalPointsCount * 0.35));
 
   const finalMaterial: StudyMaterialData = {
     id: Math.random().toString(36).substring(2, 9),
     pdf_name: pdfName,
     title: globalDocTitle,
-    subtitle: `Exam-Oriented Study Notes & Quick Revision Guide`,
+    subtitle: `Complete Document Study Notes & Quick Revision Guide (${docTotalPages} Pages Covered)`,
     language: selectedLanguage || "Auto",
+    totalPages: docTotalPages,
     created_at: new Date().toISOString(),
-    chapters: completedChapters,
+    chapters: finalChapters,
     total_points: totalPointsCount,
     estimated_read_time_minutes: estimatedReadTime,
   };
 
   yield {
     stage: "completed",
-    message: "Completed.",
-    completedChapters,
+    message: `Completed! Processed all ${docTotalPages} pages into ${finalChapters.length} comprehensive chapters (${totalPointsCount} study points).`,
+    completedChapters: finalChapters,
     studyMaterial: finalMaterial,
   };
 }
@@ -360,9 +487,22 @@ function isValidSection(sec: any): boolean {
   const hasPeople = Array.isArray(sec.peopleList) && sec.peopleList.length > 0;
   const hasDefs = Array.isArray(sec.definitionList) && sec.definitionList.length > 0;
   const hasQuickRev = Array.isArray(sec.quickRevisionList) && sec.quickRevisionList.length > 0;
-  const hasTable = sec.tableData && Array.isArray(sec.tableData.headers) && Array.isArray(sec.tableData.rows) && sec.tableData.rows.length > 0;
+  const hasTable =
+    sec.tableData &&
+    Array.isArray(sec.tableData.headers) &&
+    Array.isArray(sec.tableData.rows) &&
+    sec.tableData.rows.length > 0;
 
-  return hasItems || hasContent || hasKeyFacts || hasDates || hasPeople || hasDefs || hasQuickRev || hasTable;
+  return (
+    hasItems ||
+    hasContent ||
+    hasKeyFacts ||
+    hasDates ||
+    hasPeople ||
+    hasDefs ||
+    hasQuickRev ||
+    hasTable
+  );
 }
 
 function extractJson(raw: string): string {
@@ -374,26 +514,38 @@ function extractJson(raw: string): string {
   return raw.trim();
 }
 
-function createFallbackChapter(chunkText: string, chapterNum: number, docTitle: string): StudyMaterialChapter {
-  const lines = chunkText.split("\n").map((l) => l.trim()).filter((l) => l.length > 20);
-  const samplePoints = lines.slice(0, 8);
+function createFallbackChapter(
+  chunkText: string,
+  chapterNum: number,
+  docTitle: string,
+  sourcePagesLabel: string = `Chapter ${chapterNum}`,
+): StudyMaterialChapter {
+  const lines = chunkText
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 20 && !l.startsWith("---"));
+  const samplePoints = lines.slice(0, 10);
 
   return {
     chapterNumber: chapterNum,
-    chapterTitle: `Chapter ${chapterNum}: ${docTitle}`,
-    summary: "Key concepts extracted from the uploaded document.",
+    chapterTitle: `Chapter ${chapterNum}: ${docTitle} (${sourcePagesLabel})`,
+    summary: `Comprehensive study points extracted for ${sourcePagesLabel}.`,
+    sourcePages: sourcePagesLabel,
     sections: [
       {
         id: `sec-${chapterNum}-1`,
         type: "concepts",
-        title: "Important Concepts",
-        items: samplePoints.length > 0 ? samplePoints : ["Content extraction summary for revision."],
+        title: "Important Concepts & Theory",
+        items:
+          samplePoints.length > 0
+            ? samplePoints
+            : ["Key educational takeaway points extracted for revision."],
       },
       {
         id: `sec-${chapterNum}-2`,
         type: "exam_points",
         title: "Exam Important Points",
-        items: samplePoints.slice(0, 4).map((p) => `Important: ${p}`),
+        items: samplePoints.slice(0, 5).map((p) => `High-Yield Point: ${p}`),
         highlight: true,
       },
     ],

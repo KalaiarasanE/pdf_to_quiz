@@ -1310,10 +1310,20 @@ function App() {
 
       if (isPdf) {
         setGlobalUploadStage("Reading PDF structure...");
-        const pdfData = await extractPdfSample(file);
-        sampleText = pdfData.sampleText;
-        pagesCount = pdfData.pagesCount;
-        isScanned = pdfData.isScanned;
+        const pdfjs = await import("pdfjs-dist");
+        const workerUrl = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")).default;
+        pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
+        const buf = await file.arrayBuffer();
+        const doc = await pdfjs.getDocument({ data: buf }).promise;
+        pagesCount = doc.numPages;
+
+        setGlobalUploadStage(`Extracting text from all ${pagesCount} pages...`);
+        extractedPageList = await getPDFPagesTextFast(doc, (current, total) => {
+          setGlobalUploadProgress(30 + Math.round((current / total) * 35));
+        });
+
+        sampleText = extractedPageList.map((p) => p.text).join("\n\n");
+        isScanned = sampleText.trim().length < (pagesCount * 30);
       } else {
         setGlobalUploadStage("Reading Word document structure...");
         setGlobalUploadProgress(40);
@@ -2603,11 +2613,21 @@ function UploadStage({
         let extractedPageList: { pageNum: number; text: string }[] = [];
 
         if (isPdf) {
-          setStageName("Reading PDF structure...");
-          const pdfData = await extractPdfSample(file);
-          sampleText = pdfData.sampleText;
-          pagesCount = pdfData.pagesCount;
-          isScanned = pdfData.isScanned;
+          setStageName("Reading PDF document...");
+          const pdfjs = await import("pdfjs-dist");
+          const workerUrl = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")).default;
+          pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
+          const buf = await file.arrayBuffer();
+          const doc = await pdfjs.getDocument({ data: buf }).promise;
+          pagesCount = doc.numPages;
+
+          setStageName(`Extracting text from all ${pagesCount} pages...`);
+          extractedPageList = await getPDFPagesTextFast(doc, (current, total) => {
+            setProgress(30 + Math.round((current / total) * 35));
+          });
+
+          sampleText = extractedPageList.map((p) => p.text).join("\n\n");
+          isScanned = sampleText.trim().length < (pagesCount * 30);
         } else {
           setStageName("Reading Word document structure...");
           setProgress(40);

@@ -62,6 +62,7 @@ export interface StudyMaterialChapter {
   chapterNumber: number;
   chapterTitle: string;
   summary?: string;
+  sourcePages?: string;
   sections: StudyMaterialSection[];
 }
 
@@ -71,6 +72,7 @@ export interface StudyMaterialData {
   title: string;
   subtitle?: string;
   language: string;
+  totalPages?: number;
   created_at: string;
   chapters: StudyMaterialChapter[];
   total_points?: number;

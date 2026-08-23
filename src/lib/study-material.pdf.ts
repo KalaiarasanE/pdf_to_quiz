@@ -179,6 +179,16 @@ export async function generateStudyMaterialPdf(
       doc.text(material.language.toUpperCase(), marginX + 110, y + 12);
     }
 
+    // Pages Covered Badge
+    if (material.totalPages) {
+      doc.setFillColor(236, 253, 245); // emerald-50
+      doc.roundedRect(marginX + 168, y, 92, 18, 4, 4, "F");
+      setFont(false);
+      doc.setFontSize(8);
+      doc.setTextColor(5, 150, 105);
+      doc.text(`${material.totalPages} PAGES COVERED`, marginX + 174, y + 12);
+    }
+
     y += 28;
 
     // Document Title (H1)
@@ -244,10 +254,15 @@ export async function generateStudyMaterialPdf(
       doc.setFillColor(99, 102, 241);
       doc.rect(marginX, y, 4, 28, "F");
 
+      const bannerTitle =
+        ch.sourcePages && !ch.chapterTitle.includes(ch.sourcePages)
+          ? `${ch.chapterTitle} (${ch.sourcePages})`
+          : ch.chapterTitle;
+
       setFont(true);
       doc.setFontSize(13);
       doc.setTextColor(67, 56, 202); // indigo-700
-      doc.text(ch.chapterTitle, marginX + 14, y + 18);
+      doc.text(bannerTitle, marginX + 14, y + 18);
 
       y += 36;
 

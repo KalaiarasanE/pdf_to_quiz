@@ -10,6 +10,8 @@ import {
   Clock,
   Layers,
   GraduationCap,
+  ShieldCheck,
+  Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -24,7 +26,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { StudyMaterialData, StudyMaterialChapter, StudyMaterialStreamProgress } from "@/lib/study-material.types";
+import {
+  StudyMaterialData,
+  StudyMaterialChapter,
+  StudyMaterialStreamProgress,
+} from "@/lib/study-material.types";
 
 interface StudyMaterialConfigureProps {
   pdf: {
@@ -77,10 +83,10 @@ export function StudyMaterialConfigureStage({
   }, []);
 
   const [checklist, setChecklist] = useState<ChecklistStep[]>([
-    { id: "analyze", label: "Analyzing PDF...", status: "idle" },
-    { id: "chapters", label: "Detecting Chapters & Topic Structure...", status: "idle" },
-    { id: "generate", label: "Creating Study Material...", status: "idle" },
-    { id: "finalize", label: "Generating Final Study Material...", status: "idle" },
+    { id: "analyze", label: `Analyzing all ${pdf.pages} pages...`, status: "idle" },
+    { id: "chapters", label: "Detecting Chapters & Page Structure...", status: "idle" },
+    { id: "generate", label: "Creating In-Depth Study Notes for All Pages...", status: "idle" },
+    { id: "finalize", label: "Generating Final Multi-Page Study Material...", status: "idle" },
     { id: "complete", label: "Completed.", status: "idle" },
   ]);
 
@@ -97,7 +103,7 @@ export function StudyMaterialConfigureStage({
     setGenTime(0);
 
     const startTime = Date.now();
-    addLog("Starting AI Study Material Generation...");
+    addLog(`Starting AI Study Material Generation covering all ${pdf.pages} pages...`);
 
     const timerInterval = setInterval(() => {
       setGenTime((t) => t + 1);
@@ -105,18 +111,80 @@ export function StudyMaterialConfigureStage({
 
     try {
       updateStep("analyze", "running");
-      addLog(`Preparing document text (${pdf.pages} pages, ${pdf.chars.toLocaleString()} chars)...`);
 
-      // If document text is not full, gather from pageList or sample
+      // 1. Ensure all pages are extracted if we have the file reference
+      let pageList = pdf.pageList || [];
+      if ((!pageList || pageList.length === 0 || pageList.length < pdf.pages) && currentFile) {
+        addLog(`Extracting text from all ${pdf.pages} pages in parallel...`);
+        const fileName = currentFile.name.toLowerCase();
+        if (fileName.endsWith(".pdf") || currentFile.type === "application/pdf") {
+          const pdfjs = await import("pdfjs-dist");
+          const workerUrl = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")).default;
+          pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
+          const buf = await currentFile.arrayBuffer();
+          const doc = await pdfjs.getDocument({ data: buf }).promise;
+          const pagesCount = doc.numPages;
+          const results: { pageNum: number; text: string }[] = new Array(pagesCount);
+          const chunkSize = 25;
+          for (let i = 0; i < pagesCount; i += chunkSize) {
+            const chunkPromises = [];
+            const limit = Math.min(i + chunkSize, pagesCount);
+            for (let p = i; p < limit; p++) {
+              const pageNum = p + 1;
+              chunkPromises.push(
+                (async () => {
+                  try {
+                    const page = await doc.getPage(pageNum);
+                    const content = await page.getTextContent();
+                    const pageText = content.items.map((it: any) => it.str ?? "").join(" ");
+                    results[p] = { pageNum, text: pageText };
+                  } catch (e) {
+                    console.error(`Error reading page ${pageNum}`, e);
+                    results[p] = { pageNum, text: "" };
+                  }
+                })(),
+              );
+            }
+            await Promise.all(chunkPromises);
+            addLog(`Extracted text from pages ${i + 1}–${limit} of ${pagesCount}...`);
+          }
+          pageList = results;
+        } else {
+          const mammoth = await import("mammoth");
+          const buf = await currentFile.arrayBuffer();
+          const result = await mammoth.extractRawText({ arrayBuffer: buf });
+          const rawText = result.value || "";
+          const paragraphs = rawText.split(/\n\s*\n/);
+          const simulatedPages: { pageNum: number; text: string }[] = [];
+          let cur = "";
+          let pIdx = 1;
+          for (const p of paragraphs) {
+            if ((cur + "\n\n" + p).length > 2500 && cur.length > 0) {
+              simulatedPages.push({ pageNum: pIdx++, text: cur.trim() });
+              cur = p;
+            } else {
+              cur += (cur ? "\n\n" : "") + p;
+            }
+          }
+          if (cur.trim()) {
+            simulatedPages.push({ pageNum: pIdx++, text: cur.trim() });
+          }
+          pageList = simulatedPages;
+        }
+      }
+
       let fullDocumentText = pdf.text || "";
-      if (pdf.pageList && pdf.pageList.length > 0) {
-        fullDocumentText = pdf.pageList.map((p) => p.text).join("\n\n");
+      if (pageList && pageList.length > 0) {
+        fullDocumentText = pageList.map((p) => p.text).join("\n\n");
       }
 
       if (!fullDocumentText || fullDocumentText.length < 50) {
-        throw new Error("No readable text content found in document. Please verify the uploaded file.");
+        throw new Error(
+          "No readable text content found in document. Please verify the uploaded file.",
+        );
       }
 
+      addLog(`All ${pdf.pages} pages prepared (${fullDocumentText.length.toLocaleString()} characters).`);
       addLog("Sending request to AI Study Material Stream engine...");
       updateStep("analyze", "done");
       updateStep("chapters", "running");
@@ -126,6 +194,8 @@ export function StudyMaterialConfigureStage({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           text: fullDocumentText,
+          pageList: pageList.length > 0 ? pageList : undefined,
+          totalPages: pdf.pages,
           pdfName: pdf.name,
           apiKey,
           apiProvider,
@@ -172,10 +242,10 @@ export function StudyMaterialConfigureStage({
               updateStep("generate", "running");
             } else if (update.stage === "generating_chapter") {
               if (update.chapterTitle) {
-                setChapterUpdates((prev) => [
-                  ...prev,
-                  `✓ Chapter ${update.currentChapter}: ${update.chapterTitle} completed`,
-                ]);
+                setChapterUpdates((prev) => {
+                  const entry = `✓ ${update.chapterTitle}`;
+                  return prev.includes(entry) ? prev : [...prev, entry];
+                });
               }
             } else if (update.stage === "finalizing") {
               updateStep("generate", "done");
@@ -198,7 +268,9 @@ export function StudyMaterialConfigureStage({
       }
 
       const elapsed = Math.round((Date.now() - startTime) / 1000);
-      toast.success(`Study Material created successfully! (${finalMaterial.chapters.length} chapters)`);
+      toast.success(
+        `Full Study Material created successfully! (${finalMaterial.chapters.length} chapters covering all ${pdf.pages} pages)`,
+      );
 
       setTimeout(() => {
         onFinished(finalMaterial!, elapsed);
@@ -220,15 +292,33 @@ export function StudyMaterialConfigureStage({
             <div>
               <div className="flex items-center gap-2.5 text-indigo-500 mb-1">
                 <GraduationCap className="h-6 w-6" />
-                <span className="text-xs font-bold uppercase tracking-wider">AI Study Material Engine</span>
+                <span className="text-xs font-bold uppercase tracking-wider">
+                  Full Document Study Material Engine
+                </span>
               </div>
               <h2 className="text-2xl md:text-3xl font-extrabold tracking-tight">
-                Create Structured Study Notes
+                Create Full-Document Study Notes
               </h2>
               <p className="mt-1.5 text-sm text-muted-foreground leading-relaxed">
-                Transform lengthy PDF chapters into concise, revision-ready, exam-oriented study material
-                with key facts, definitions, dates, exam points, and quick revision notes.
+                Transforms every single page into comprehensive, high-yield, exam-oriented study
+                points with key facts, definitions, dates, exam points, formulas, and quick revision
+                notes.
               </p>
+            </div>
+
+            {/* Coverage Guarantee Banner */}
+            <div className="p-4 rounded-xl border border-indigo-500/20 bg-indigo-500/5 flex items-start gap-3">
+              <ShieldCheck className="h-5 w-5 text-indigo-400 shrink-0 mt-0.5" />
+              <div className="text-xs space-y-1">
+                <p className="font-bold text-foreground">
+                  Complete Document Coverage Guaranteed ({pdf.pages} Pages)
+                </p>
+                <p className="text-muted-foreground leading-relaxed">
+                  Every page of your uploaded document is systematically analyzed and transformed
+                  into detailed study notes. No pages are skipped, and the output is never compressed
+                  into a one-page summary.
+                </p>
+              </div>
             </div>
 
             {/* Language & Customization */}
@@ -250,29 +340,41 @@ export function StudyMaterialConfigureStage({
                     </Badge>
                   </div>
 
-                  <div>
-                    <Label className="text-xs text-muted-foreground mb-1.5 block">
-                      Target Output Language (Defaults to detected document language)
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    By default, QuizCrack preserves the document's original language (Tamil,
+                    English, Hindi, Telugu, Tanglish, etc.) with 100% proper Unicode.
+                  </p>
+
+                  <div className="pt-2">
+                    <Label className="mb-2 block text-xs font-semibold text-muted-foreground">
+                      Target Output Language (Optional override):
                     </Label>
-                    <Select
-                      value={selectedLanguage || detectedLanguage}
-                      onValueChange={(val) => setSelectedLanguage(val)}
-                    >
-                      <SelectTrigger className="w-full md:w-80 bg-background/50 text-sm">
+                    <Select value={selectedLanguage} onValueChange={setSelectedLanguage}>
+                      <SelectTrigger className="w-full md:w-80 bg-background/50 text-xs h-9">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value={detectedLanguage}>
-                          Original ({detectedLanguage})
+                          Original Language ({detectedLanguage})
                         </SelectItem>
-                        {detectedLanguage !== "English" && <SelectItem value="English">English</SelectItem>}
-                        {detectedLanguage !== "Tamil" && <SelectItem value="Tamil">Tamil (தமிழ்)</SelectItem>}
+                        {detectedLanguage !== "English" && (
+                          <SelectItem value="English">English</SelectItem>
+                        )}
+                        {detectedLanguage !== "Tamil" && (
+                          <SelectItem value="Tamil">Tamil (தமிழ்)</SelectItem>
+                        )}
                         {detectedLanguage !== "Tanglish" && (
                           <SelectItem value="Tanglish">Tanglish (Tamil in Latin)</SelectItem>
                         )}
-                        {detectedLanguage !== "Hindi" && <SelectItem value="Hindi">Hindi (हिन्दी)</SelectItem>}
-                        {detectedLanguage !== "Telugu" && <SelectItem value="Telugu">Telugu (తెలుగు)</SelectItem>}
-                        {detectedLanguage !== "Kannada" && <SelectItem value="Kannada">Kannada (ಕನ್ನಡ)</SelectItem>}
+                        {detectedLanguage !== "Hindi" && (
+                          <SelectItem value="Hindi">Hindi (हिन्दी)</SelectItem>
+                        )}
+                        {detectedLanguage !== "Telugu" && (
+                          <SelectItem value="Telugu">Telugu (తెలుగు)</SelectItem>
+                        )}
+                        {detectedLanguage !== "Kannada" && (
+                          <SelectItem value="Kannada">Kannada (ಕನ್ನಡ)</SelectItem>
+                        )}
                         {detectedLanguage !== "Malayalam" && (
                           <SelectItem value="Malayalam">Malayalam (മലയാളം)</SelectItem>
                         )}
@@ -282,24 +384,7 @@ export function StudyMaterialConfigureStage({
                 </div>
               </div>
 
-              {/* Study Material Highlights Feature List */}
-              <div className="p-4 bg-indigo-500/5 border border-indigo-500/20 rounded-xl space-y-2 text-xs text-muted-foreground">
-                <span className="font-bold text-foreground text-xs block">
-                  Included Study Material Sections:
-                </span>
-                <div className="grid grid-cols-2 gap-2 pt-1 text-[11px]">
-                  <span>✓ Main Topic & Intro</span>
-                  <span>✓ Important Concepts</span>
-                  <span>✓ Key Facts & Statistics</span>
-                  <span>✓ Important Dates & Timeline</span>
-                  <span>✓ Important People</span>
-                  <span>✓ Definitions & Glossary</span>
-                  <span>✓ Exam Important Points (★)</span>
-                  <span>✓ Quick Revision (Key → Fact)</span>
-                </div>
-              </div>
-
-              {/* Actions */}
+              {/* Action Buttons */}
               <div className="flex gap-3 pt-6 border-t border-border/30">
                 <Button variant="outline" onClick={onBack} disabled={busy}>
                   <ChevronLeft className="mr-1.5 h-4 w-4" />
@@ -308,34 +393,35 @@ export function StudyMaterialConfigureStage({
                 <Button
                   onClick={handleStartGeneration}
                   disabled={busy}
-                  className="flex-1 bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-600 hover:from-indigo-700 hover:to-purple-700 font-bold shadow-lg shadow-indigo-500/25 h-11 text-sm text-white"
+                  className="flex-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500 hover:from-indigo-600 hover:to-purple-600 font-semibold shadow-lg shadow-indigo-500/20 text-white"
                 >
-                  <Sparkles className="mr-2 h-4 w-4 animate-spin-slow" />
-                  Create Study Material
+                  <Sparkles className="mr-2 h-4 w-4" />
+                  Generate Full Study Notes ({pdf.pages} Pages)
                 </Button>
               </div>
             </div>
           </Card>
         ) : (
-          /* Live Generation Progress Screen */
+          /* Live Streaming Progress Screen */
           <Card className="p-8 bg-card/60 backdrop-blur-sm border-border space-y-8">
             <div>
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Loader2 className="h-5 w-5 animate-spin text-indigo-500" />
-                  <h2 className="text-2xl font-bold tracking-tight">Generating Study Material...</h2>
-                </div>
+                <h2 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+                  <GraduationCap className="h-6 w-6 text-indigo-500" />
+                  Generating Full Study Notes...
+                </h2>
                 <div className="text-sm font-mono bg-indigo-500/10 text-indigo-400 px-3 py-1 rounded-md">
                   Elapsed: {genTime}s
                 </div>
               </div>
               <p className="text-sm text-muted-foreground mt-1">
-                Analyzing chapters, extracting high-yield points, and formatting study notes.
+                Systematically analyzing all {pdf.pages} pages without compressing or skipping
+                content.
               </p>
             </div>
 
-            {/* Checklist items */}
-            <div className="space-y-4 max-w-md">
+            {/* Checklist Pipeline */}
+            <div className="p-6 rounded-2xl border border-border/60 bg-card/40 space-y-4">
               {checklist.map((step) => {
                 const isIdle = step.status === "idle";
                 const isRunning = step.status === "running";
@@ -373,9 +459,9 @@ export function StudyMaterialConfigureStage({
             {chapterUpdates.length > 0 && (
               <div className="space-y-2 border-t border-border/30 pt-4">
                 <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                  Chapter Progress
+                  Chapters Completed Across All Pages
                 </span>
-                <div className="space-y-1.5">
+                <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
                   {chapterUpdates.map((c, idx) => (
                     <div
                       key={idx}
@@ -392,7 +478,7 @@ export function StudyMaterialConfigureStage({
             {/* Live Terminal Logs */}
             <div className="space-y-2">
               <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                Pipeline Logs
+                Pipeline Live Logs
               </span>
               <div className="bg-black/50 border border-border/60 rounded-xl p-4 font-mono text-xs text-indigo-300 h-36 overflow-y-auto space-y-1.5 scrollbar-thin">
                 {logs.length === 0 ? (
@@ -417,7 +503,7 @@ export function StudyMaterialConfigureStage({
           <div className="mt-6 space-y-3.5 text-sm">
             <div className="flex items-center justify-between border-b border-border/30 pb-2">
               <span className="text-muted-foreground">Total pages</span>
-              <span className="font-semibold">{pdf.pages}</span>
+              <span className="font-semibold">{pdf.pages} Pages</span>
             </div>
             <div className="flex items-center justify-between border-b border-border/30 pb-2">
               <span className="text-muted-foreground">Characters count</span>
@@ -428,9 +514,9 @@ export function StudyMaterialConfigureStage({
               <span className="font-semibold text-indigo-400">{detectedLanguage}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Format</span>
+              <span className="text-muted-foreground">Output Format</span>
               <Badge variant="outline" className="text-xs">
-                A4 Study Book
+                Multi-Page A4 Study Book
               </Badge>
             </div>
           </div>

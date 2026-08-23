@@ -272,6 +272,11 @@ export function StudyMaterialView({
               <span className="px-2.5 py-1 bg-slate-100 text-slate-700 font-semibold text-xs rounded-md border border-slate-200 uppercase">
                 {material.language || "Unicode"}
               </span>
+              {material.totalPages && (
+                <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 font-semibold text-xs rounded-md border border-emerald-200">
+                  {material.totalPages} Pages Covered
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-4 text-xs text-slate-500">
               <span className="flex items-center gap-1">
@@ -300,12 +305,12 @@ export function StudyMaterialView({
 
           {/* Document Subtitle */}
           <p className="text-sm md:text-base text-slate-600 mt-2 font-medium">
-            {material.subtitle || "Exam-Oriented Study Notes & Quick Revision Guide"}
+            {material.subtitle || "Complete Document Study Notes & Quick Revision Guide"}
           </p>
 
           {/* Source Document Tag */}
           <div className="mt-4 inline-flex items-center gap-2 px-3 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-500">
-            <span>Source PDF:</span>
+            <span>Source Document:</span>
             <span className="font-semibold text-slate-800 truncate max-w-xs md:max-w-md">
               {material.pdf_name}
             </span>
@@ -318,25 +323,34 @@ export function StudyMaterialView({
             <div key={chIdx} id={`chapter-${chIdx}`} className="space-y-6 pt-2">
               {/* Chapter Banner */}
               <div className="p-4 bg-gradient-to-r from-indigo-50 to-indigo-100/50 border-l-4 border-indigo-600 rounded-r-xl">
-                <div className="flex items-center justify-between">
-                  {isEditing ? (
-                    <Input
-                      value={ch.chapterTitle}
-                      onChange={(e) => {
-                        const newChapters = [...material.chapters];
-                        newChapters[chIdx].chapterTitle = e.target.value;
-                        handleUpdate({ ...material, chapters: newChapters });
-                      }}
-                      className="font-bold text-lg bg-white border-slate-300"
-                    />
-                  ) : (
-                    <h2 className="text-xl md:text-2xl font-extrabold text-indigo-900">
-                      {ch.chapterTitle}
-                    </h2>
-                  )}
-                  <Badge className="bg-indigo-600 text-white font-bold text-xs shrink-0">
-                    Chapter {ch.chapterNumber}
-                  </Badge>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex-1 min-w-[240px]">
+                    {isEditing ? (
+                      <Input
+                        value={ch.chapterTitle}
+                        onChange={(e) => {
+                          const newChapters = [...material.chapters];
+                          newChapters[chIdx].chapterTitle = e.target.value;
+                          handleUpdate({ ...material, chapters: newChapters });
+                        }}
+                        className="font-bold text-lg bg-white border-slate-300"
+                      />
+                    ) : (
+                      <h2 className="text-xl md:text-2xl font-extrabold text-indigo-900">
+                        {ch.chapterTitle}
+                      </h2>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {ch.sourcePages && (
+                      <Badge variant="outline" className="bg-white/80 text-indigo-800 text-xs font-semibold border-indigo-300">
+                        {ch.sourcePages}
+                      </Badge>
+                    )}
+                    <Badge className="bg-indigo-600 text-white font-bold text-xs">
+                      Chapter {ch.chapterNumber}
+                    </Badge>
+                  </div>
                 </div>
 
                 {ch.summary && (
