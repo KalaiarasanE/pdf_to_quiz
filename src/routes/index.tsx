@@ -2892,7 +2892,37 @@ function UploadStage({
         )}
       </div>
 
-      {/* Woblo Glass Drag & Drop Zone */}
+      {/* Woblo Animated Infinite Marquee Ticker */}
+      <div className="w-full overflow-hidden py-3 relative border-y border-white/[0.06] bg-card/20 backdrop-blur-md">
+        <div className="absolute left-0 top-0 bottom-0 w-16 bg-gradient-to-r from-background to-transparent z-10 pointer-events-none" />
+        <div className="absolute right-0 top-0 bottom-0 w-16 bg-gradient-to-l from-background to-transparent z-10 pointer-events-none" />
+        
+        <div className="flex w-max animate-marquee-x gap-4">
+          {[...Array(2)].flatMap(() => [
+            { icon: "⚡", text: "50+ MCQs in 8 Seconds", badge: "ULTRA FAST" },
+            { icon: "📚", text: "100% Page Coverage (No Skipping)", badge: "COMPLETE" },
+            { icon: "🌐", text: "Tamil / Hindi / English Unicode", badge: "MULTILINGUAL" },
+            { icon: "🎯", text: "Bloom's Taxonomy & Difficulty Engine", badge: "SMART AI" },
+            { icon: "⏱️", text: "Real-Time Timed Mock Exam Simulator", badge: "PRACTICE" },
+            { icon: "📥", text: "A4 PDF, Word DOCX & Excel Exports", badge: "FORMATS" },
+            { icon: "🔍", text: "Tesseract OCR Image Extraction", badge: "VISION" },
+            { icon: "✨", text: "Zero Hallucination Guarantee", badge: "VERIFIED" },
+          ]).map((item, idx) => (
+            <div
+              key={idx}
+              className="inline-flex items-center gap-2.5 px-4 py-1.5 rounded-full bg-white/[0.04] border border-white/10 text-xs font-semibold text-white/90 shrink-0 hover:bg-white/[0.08] transition-colors"
+            >
+              <span>{item.icon}</span>
+              <span>{item.text}</span>
+              <span className="px-1.5 py-0.5 rounded-full bg-primary/20 text-primary text-[9px] font-bold tracking-wider">
+                {item.badge}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Woblo Glass Drag & Drop Zone with Animated Border Beam */}
       <Card
         onDragOver={(e) => {
           e.preventDefault();
@@ -2905,18 +2935,18 @@ function UploadStage({
           const file = e.dataTransfer.files?.[0];
           if (file) void handleFile(file);
         }}
-        className={`woblo-glass border-2 border-dashed p-10 sm:p-14 text-center cursor-pointer transition-all duration-300 relative overflow-hidden rounded-3xl ${
+        className={`woblo-glass woblo-border-beam border-2 border-dashed p-10 sm:p-14 text-center cursor-pointer transition-all duration-300 relative overflow-hidden rounded-3xl group ${
           dragging
-            ? "border-primary bg-primary/10 scale-[0.99] shadow-[0_0_40px_rgba(26,64,255,0.25)]"
-            : "border-white/15 hover:border-primary/60 hover:shadow-[0_0_30px_rgba(26,64,255,0.12)]"
+            ? "border-primary bg-primary/10 scale-[0.99] shadow-[0_0_50px_rgba(26,64,255,0.3)]"
+            : "border-white/15 hover:border-primary/60 hover:shadow-[0_0_40px_rgba(26,64,255,0.18)]"
         }`}
         onClick={() => !busy && inputRef.current?.click()}
       >
-        <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-primary/10 text-primary border border-primary/20 shadow-inner">
+        <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-primary/15 text-primary border border-primary/30 shadow-[0_0_20px_rgba(26,64,255,0.2)] group-hover:scale-110 group-hover:shadow-[0_0_30px_rgba(26,64,255,0.4)] transition-all duration-300">
           {mode === "study-material" ? <GraduationCap className="h-8 w-8" /> : <Upload className="h-8 w-8" />}
         </div>
         
-        <h2 className="mt-5 text-xl sm:text-2xl font-bold tracking-tight text-foreground">
+        <h2 className="mt-5 text-xl sm:text-2xl font-black tracking-tight text-foreground">
           Drag & drop your PDF, DOC, or DOCX file here
         </h2>
         <p className="mt-2 text-sm text-muted-foreground max-w-md mx-auto leading-relaxed">
@@ -2928,7 +2958,7 @@ function UploadStage({
           <span className="woblo-badge text-[10px] text-white/80">📄 PDF Documents</span>
           <span className="woblo-badge text-[10px] text-white/80">📝 Word (.docx, .doc)</span>
           <span className="woblo-badge text-[10px] text-white/80">🔍 OCR Image Extraction</span>
-          <span className="woblo-badge text-[10px] text-white/80">🌐 Multilingual (Tamil, Hindi, etc.)</span>
+          <span className="woblo-badge text-[10px] text-white/80">🌐 Multilingual Unicode</span>
         </div>
 
         <input
@@ -2945,7 +2975,7 @@ function UploadStage({
         {busy && (
           <div className="absolute inset-0 bg-background/90 backdrop-blur-md flex flex-col items-center justify-center p-8 z-20 animate-fade-in">
             <div className="relative mx-auto w-14 h-14 flex items-center justify-center mb-3">
-              <div className="absolute inset-0 rounded-full bg-primary/20 animate-ping" />
+              <div className="absolute inset-0 rounded-full bg-primary/25 animate-ping" />
               <Loader2 className="h-8 w-8 animate-spin text-primary relative z-10" />
             </div>
             <h3 className="text-lg font-bold tracking-tight">{stageName}</h3>
@@ -2960,7 +2990,7 @@ function UploadStage({
         )}
       </Card>
 
-      {/* Woblo 3 Feature Cards Grid */}
+      {/* Woblo 3 Feature Cards Grid with Smooth Hover Glow */}
       <div className="grid gap-6 md:grid-cols-3">
         {[
           {
@@ -2984,11 +3014,11 @@ function UploadStage({
         ].map((f, i) => (
           <Card
             key={i}
-            className="p-6 bg-card/60 backdrop-blur-md border border-border/80 rounded-3xl prompt-card-hover flex flex-col justify-between"
+            className="p-6 bg-card/60 backdrop-blur-md border border-border/80 rounded-3xl prompt-card-hover flex flex-col justify-between hover:border-primary/40 hover:shadow-[0_16px_40px_rgba(26,64,255,0.15)] group"
           >
             <div>
               <div className="flex items-center justify-between mb-4">
-                <div className="h-10 w-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary">
+                <div className="h-10 w-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary group-hover:scale-110 transition-transform">
                   <f.icon className="h-5 w-5" />
                 </div>
                 <span className="woblo-badge text-[9px] uppercase tracking-wider">{f.badge}</span>

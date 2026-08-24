@@ -221,6 +221,15 @@
   }
 }
 
+@keyframes marquee-x-reverse {
+  0% {
+    transform: translateX(-50%);
+  }
+  100% {
+    transform: translateX(0%);
+  }
+}
+
 @keyframes slide-up-banner {
   0% {
     opacity: 0;
@@ -246,18 +255,56 @@
 @keyframes pulse-subtle {
   0%, 100% {
     opacity: 1;
+    transform: scale(1);
   }
   50% {
-    opacity: 0.7;
+    opacity: 0.65;
+    transform: scale(0.98);
   }
 }
 
 @keyframes float-slow {
   0%, 100% {
-    transform: translateY(0);
+    transform: translateY(0px) rotate(0deg);
   }
   50% {
-    transform: translateY(-8px);
+    transform: translateY(-10px) rotate(1deg);
+  }
+}
+
+@keyframes aurora-drift {
+  0% {
+    transform: translate(0px, 0px) scale(1);
+  }
+  33% {
+    transform: translate(30px, -40px) scale(1.1);
+  }
+  66% {
+    transform: translate(-25px, 20px) scale(0.95);
+  }
+  100% {
+    transform: translate(0px, 0px) scale(1);
+  }
+}
+
+@keyframes border-glow-rotate {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes scanline {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(1000%);
   }
 }
 
@@ -277,7 +324,57 @@
 
 /* Marquee animation */
 .animate-marquee-x {
-  animation: 45s linear infinite marquee-x;
+  animation: 35s linear infinite marquee-x;
+}
+
+.animate-marquee-x:hover {
+  animation-play-state: paused;
+}
+
+.animate-marquee-x-reverse {
+  animation: 35s linear infinite marquee-x-reverse;
+}
+
+.animate-marquee-x-reverse:hover {
+  animation-play-state: paused;
+}
+
+/* Aurora background drifting orbs */
+.animate-aurora {
+  animation: 18s ease-in-out infinite alternate aurora-drift;
+}
+
+.animate-aurora-slow {
+  animation: 25s ease-in-out infinite alternate-reverse aurora-drift;
+}
+
+/* Parallax Fade Up */
+.animate-parallax-fade-up {
+  animation: 0.6s ease-out both parallax-fade-up;
+}
+
+.animate-float {
+  animation: 6s ease-in-out infinite float-slow;
+}
+
+/* Animated Border Glow Sweep */
+.woblo-border-beam {
+  position: relative;
+}
+
+.woblo-border-beam::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: linear-gradient(90deg, #1a40ff, #8b5cf6, #ec4899, #1a40ff);
+  background-size: 300% 300%;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: border-glow-rotate 6s ease infinite;
+  pointer-events: none;
 }
 
 /* Parallax Fade Up */
