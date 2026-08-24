@@ -146,19 +146,19 @@ export function StudyMaterialView({
       }`}
     >
       {/* Top Header & Actions Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border/40 pb-5">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border/60 pb-5">
         <div className="flex items-center gap-3">
-          <Button variant="outline" size="sm" onClick={onBack} className="gap-1.5 h-9">
+          <Button variant="outline" size="sm" onClick={onBack} className="gap-1.5 h-10 rounded-full px-4 text-xs">
             <ChevronLeft className="h-4 w-4" /> Back
           </Button>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">
+              <h1 className="text-2xl md:text-3xl font-black tracking-tight text-foreground">
                 Study Material Preview
               </h1>
-              <Badge className="bg-indigo-500/10 text-indigo-500 border-indigo-500/20 text-[10px] font-bold">
+              <span className="woblo-badge text-[10px] uppercase font-bold">
                 A4 BOOK FORMAT
-              </Badge>
+              </span>
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
               Review your structured study notes below or download high-quality PDF.
@@ -172,7 +172,7 @@ export function StudyMaterialView({
             variant={isEditing ? "default" : "outline"}
             size="sm"
             onClick={() => setIsEditing(!isEditing)}
-            className="gap-1.5 h-9 text-xs"
+            className="gap-1.5 h-10 rounded-full text-xs px-4"
           >
             <Edit3 className="h-3.5 w-3.5" />
             <span>{isEditing ? "Done Editing" : "Edit Notes"}</span>
@@ -183,7 +183,7 @@ export function StudyMaterialView({
             variant="outline"
             size="sm"
             onClick={handleCopyAll}
-            className="gap-1.5 h-9 text-xs"
+            className="gap-1.5 h-10 rounded-full text-xs px-3.5"
             title="Copy Notes to Clipboard"
           >
             <Copy className="h-3.5 w-3.5" />
@@ -196,7 +196,7 @@ export function StudyMaterialView({
             size="sm"
             onClick={handleDownloadDocx}
             disabled={downloadingDocx}
-            className="gap-1.5 h-9 text-xs"
+            className="gap-1.5 h-10 rounded-full text-xs px-3.5"
             title="Download Word (.docx)"
           >
             <FileText className="h-3.5 w-3.5" />
@@ -207,7 +207,7 @@ export function StudyMaterialView({
           <Button
             onClick={handleDownloadPdf}
             disabled={downloadingPdf}
-            className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-bold shadow-lg shadow-indigo-500/20 gap-2 h-9 px-4 text-xs md:text-sm"
+            className="bg-primary hover:bg-primary/90 text-white font-bold shadow-[0_0_20px_rgba(26,64,255,0.4)] gap-2 h-10 px-5 rounded-full text-xs md:text-sm"
           >
             <Download className="h-4 w-4" />
             <span>Download Study Material</span>
@@ -218,7 +218,7 @@ export function StudyMaterialView({
             variant="ghost"
             size="icon"
             onClick={() => setFullscreen(!fullscreen)}
-            className="h-9 w-9"
+            className="h-10 w-10 rounded-full"
             title={fullscreen ? "Exit Fullscreen" : "Fullscreen View"}
           >
             {fullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
@@ -227,35 +227,37 @@ export function StudyMaterialView({
       </div>
 
       {/* Filter & Chapter Jump Strip */}
-      <div className="flex flex-col sm:flex-row gap-3 items-center justify-between bg-card/40 backdrop-blur-sm border border-border p-3.5 rounded-xl">
+      <div className="flex flex-col sm:flex-row gap-3 items-center justify-between woblo-glass p-3.5 rounded-2xl">
         <div className="flex items-center gap-2 w-full sm:w-auto flex-1">
           <div className="relative w-full sm:w-72">
-            <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
             <Input
               placeholder="Search concepts, dates, facts..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9 h-9 text-xs bg-background/50"
+              className="pl-9 h-10 text-xs bg-background/50 rounded-xl border-border/80"
             />
           </div>
         </div>
 
-        <div className="flex items-center gap-2 overflow-x-auto max-w-full pb-1 sm:pb-0 scrollbar-thin">
+        <div className="flex items-center gap-1.5 overflow-x-auto max-w-full pb-1 sm:pb-0 scrollbar-thin">
           <span className="text-xs text-muted-foreground font-semibold shrink-0">Chapters:</span>
           {material.chapters.map((ch, idx) => (
-            <Button
+            <button
               key={idx}
-              variant={activeChapterIndex === idx ? "secondary" : "ghost"}
-              size="sm"
               onClick={() => {
                 setActiveChapterIndex(idx);
                 const el = document.getElementById(`chapter-${idx}`);
                 if (el) el.scrollIntoView({ behavior: "smooth" });
               }}
-              className="h-7 text-xs px-2.5 shrink-0 rounded-lg"
+              className={`h-8 text-xs px-3 shrink-0 rounded-full font-medium transition-all ${
+                activeChapterIndex === idx
+                  ? "bg-primary text-white shadow-[0_0_12px_rgba(26,64,255,0.35)] font-bold"
+                  : "text-muted-foreground hover:text-foreground hover:bg-white/[0.06]"
+              }`}
             >
               Ch {idx + 1}
-            </Button>
+            </button>
           ))}
         </div>
       </div>

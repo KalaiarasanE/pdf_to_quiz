@@ -285,21 +285,21 @@ export function StudyMaterialConfigureStage({
   }
 
   return (
-    <div className="grid gap-8 md:grid-cols-3 max-w-5xl mx-auto animate-fade-in">
+    <div className="grid gap-8 md:grid-cols-3 max-w-5xl mx-auto animate-fade-in py-2">
       <div className="md:col-span-2 space-y-6">
         {!busy ? (
-          <Card className="p-8 bg-card/40 backdrop-blur-sm border-border space-y-8">
+          <Card className="p-8 sm:p-10 woblo-glass border border-white/10 rounded-3xl space-y-8 shadow-2xl">
             <div>
-              <div className="flex items-center gap-2.5 text-indigo-500 mb-1">
-                <GraduationCap className="h-6 w-6" />
-                <span className="text-xs font-bold uppercase tracking-wider">
-                  Full Document Study Material Engine
+              <div className="flex items-center gap-2 text-primary mb-2">
+                <GraduationCap className="h-5 w-5" />
+                <span className="woblo-badge text-[10px] uppercase font-bold tracking-wider">
+                  FULL DOCUMENT REVISION ENGINE
                 </span>
               </div>
-              <h2 className="text-2xl md:text-3xl font-extrabold tracking-tight">
+              <h2 className="text-2xl md:text-3xl font-black tracking-tight text-foreground">
                 Create Full-Document Study Notes
               </h2>
-              <p className="mt-1.5 text-sm text-muted-foreground leading-relaxed">
+              <p className="mt-2 text-sm text-muted-foreground leading-relaxed">
                 Transforms every single page into comprehensive, high-yield, exam-oriented study
                 points with key facts, definitions, dates, exam points, formulas, and quick revision
                 notes.
@@ -307,8 +307,8 @@ export function StudyMaterialConfigureStage({
             </div>
 
             {/* Coverage Guarantee Banner */}
-            <div className="p-4 rounded-xl border border-indigo-500/20 bg-indigo-500/5 flex items-start gap-3">
-              <ShieldCheck className="h-5 w-5 text-indigo-400 shrink-0 mt-0.5" />
+            <div className="p-4 rounded-2xl border border-primary/25 bg-primary/10 flex items-start gap-3 shadow-inner">
+              <ShieldCheck className="h-5 w-5 text-primary shrink-0 mt-0.5" />
               <div className="text-xs space-y-1">
                 <p className="font-bold text-foreground">
                   Complete Document Coverage Guaranteed ({pdf.pages} Pages)
@@ -322,19 +322,19 @@ export function StudyMaterialConfigureStage({
             </div>
 
             {/* Language & Customization */}
-            <div className="space-y-6 border-t border-border/40 pt-6">
+            <div className="space-y-6 border-t border-border/60 pt-6">
               <div>
-                <Label className="mb-2.5 block text-sm font-semibold flex items-center gap-1.5">
-                  <BookOpen className="h-4 w-4 text-indigo-500" />
+                <Label className="mb-2.5 block text-sm font-semibold flex items-center gap-2">
+                  <BookOpen className="h-4 w-4 text-primary" />
                   Document Language & Preservation
                 </Label>
 
                 <div className="space-y-3.5">
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground p-3 rounded-xl border border-border/40 bg-muted/20">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground p-3.5 rounded-2xl border border-border/60 bg-secondary/50">
                     <span>Detected Language:</span>
                     <Badge
-                      variant="secondary"
-                      className="bg-indigo-500/10 text-indigo-400 border-indigo-500/20 font-bold"
+                      variant="glow"
+                      className="font-bold text-xs"
                     >
                       {detectedLanguage}
                     </Badge>
@@ -350,7 +350,7 @@ export function StudyMaterialConfigureStage({
                       Target Output Language (Optional override):
                     </Label>
                     <Select value={selectedLanguage} onValueChange={setSelectedLanguage}>
-                      <SelectTrigger className="w-full md:w-80 bg-background/50 text-xs h-9">
+                      <SelectTrigger className="w-full md:w-80 bg-background/50 rounded-xl text-xs h-10 border-border/80">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -385,15 +385,15 @@ export function StudyMaterialConfigureStage({
               </div>
 
               {/* Action Buttons */}
-              <div className="flex gap-3 pt-6 border-t border-border/30">
-                <Button variant="outline" onClick={onBack} disabled={busy}>
+              <div className="flex gap-3 pt-6 border-t border-border/60">
+                <Button variant="outline" onClick={onBack} disabled={busy} className="rounded-xl px-5 h-11">
                   <ChevronLeft className="mr-1.5 h-4 w-4" />
                   Back
                 </Button>
                 <Button
                   onClick={handleStartGeneration}
                   disabled={busy}
-                  className="flex-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500 hover:from-indigo-600 hover:to-purple-600 font-semibold shadow-lg shadow-indigo-500/20 text-white"
+                  className="flex-1 bg-primary hover:bg-primary/90 font-bold shadow-[0_0_24px_rgba(26,64,255,0.4)] text-white rounded-xl h-11"
                 >
                   <Sparkles className="mr-2 h-4 w-4" />
                   Generate Full Study Notes ({pdf.pages} Pages)

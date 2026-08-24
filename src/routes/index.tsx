@@ -1526,14 +1526,19 @@ function App() {
 
 
   return (
-    <div className="min-h-screen bg-background text-foreground transition-colors duration-200 flex flex-col">
+    <div className="min-h-screen bg-background text-foreground transition-colors duration-200 flex flex-col relative overflow-x-hidden">
       <Toaster richColors position="top-right" />
+
+      {/* Woblo Atmospheric Ambient Glowing Background Orbs */}
+      <div className="woblo-glow-mesh w-[600px] h-[350px] top-[-120px] left-1/2 -translate-x-1/2 bg-[radial-gradient(circle,rgba(26,64,255,0.18)_0%,rgba(139,92,246,0.12)_45%,transparent_70%)] pointer-events-none" />
+      <div className="woblo-glow-mesh w-[450px] h-[350px] top-[35%] right-[-100px] bg-[radial-gradient(circle,rgba(232,64,13,0.09)_0%,rgba(208,178,255,0.08)_50%,transparent_70%)] pointer-events-none" />
+      <div className="woblo-glow-mesh w-[500px] h-[350px] bottom-[-100px] left-[-100px] bg-[radial-gradient(circle,rgba(26,64,255,0.1)_0%,rgba(6,182,212,0.08)_50%,transparent_70%)] pointer-events-none" />
 
       {/* Global Upload File Input (hidden) */}
       <input
         ref={globalFileInputRef}
         type="file"
-        accept="application/pdf,.pdf"
+        accept="application/pdf,.pdf,.doc,.docx"
         className="hidden"
         onChange={(e) => {
           const file = e.target.files?.[0];
@@ -1543,17 +1548,20 @@ function App() {
 
       {/* Global Uploading Frosted-Glass Overlay */}
       {globalUploading && (
-        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background/80 backdrop-blur-md p-8">
-          <div className="w-full max-w-md p-8 rounded-2xl border border-border bg-card/60 shadow-2xl text-center space-y-6">
-            <Loader2 className="h-12 w-12 animate-spin text-indigo-500 mx-auto" />
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background/80 backdrop-blur-xl p-8 animate-fade-in">
+          <div className="w-full max-w-md p-8 rounded-3xl border border-white/10 bg-card/85 shadow-2xl text-center space-y-6">
+            <div className="relative mx-auto w-16 h-16 flex items-center justify-center">
+              <div className="absolute inset-0 rounded-full bg-primary/20 animate-ping" />
+              <Loader2 className="h-10 w-10 animate-spin text-primary relative z-10" />
+            </div>
             <div className="space-y-2">
               <h3 className="text-xl font-bold tracking-tight">{globalUploadStage}</h3>
-              <p className="text-xs text-muted-foreground">Please wait while we extract content from the PDF</p>
+              <p className="text-xs text-muted-foreground">Please wait while our AI extracts and structures document contents</p>
             </div>
-            <div className="space-y-1">
-              <Progress value={globalUploadProgress} className="h-2 animate-pulse" />
-              <div className="flex justify-between text-[10px] text-muted-foreground">
-                <span>Parsing pages...</span>
+            <div className="space-y-1.5">
+              <Progress value={globalUploadProgress} className="h-2" />
+              <div className="flex justify-between text-[11px] text-muted-foreground font-medium">
+                <span>Processing document...</span>
                 <span>{globalUploadProgress}%</span>
               </div>
             </div>
@@ -1565,22 +1573,22 @@ function App() {
       <div className="fixed bottom-6 right-6 z-40 md:hidden">
         <Button
           onClick={() => globalFileInputRef.current?.click()}
-          className="h-14 w-14 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 shadow-xl flex items-center justify-center text-white hover:scale-105 transition"
-          title="Upload PDF"
+          className="h-14 w-14 rounded-full bg-primary text-white shadow-[0_0_24px_rgba(26,64,255,0.5)] flex items-center justify-center hover:scale-105 transition"
+          title="Upload Document"
         >
           <Upload className="h-6 w-6" />
         </Button>
       </div>
 
-      {/* Header bar */}
-      <header className="sticky top-0 z-45 w-full border-b border-border bg-background/85 backdrop-blur-md">
-        <div className="flex h-16 items-center justify-between px-6">
+      {/* Woblo Header Bar */}
+      <header className="sticky top-0 z-45 w-full border-b border-border/80 bg-background/80 backdrop-blur-xl">
+        <div className="flex h-16 items-center justify-between px-4 sm:px-6">
           <div className="flex items-center gap-3">
             {/* Hamburger button on Mobile */}
             <Button
               variant="ghost"
               size="icon"
-              className="md:hidden"
+              className="md:hidden h-9 w-9"
               onClick={() => setMobileMenuOpen(true)}
             >
               <Menu className="h-5 w-5" />
@@ -1591,52 +1599,100 @@ function App() {
                 setStage("upload");
                 setActiveTab("generate");
               }}
-              className="flex items-center gap-2.5 text-lg font-bold tracking-tight hover:opacity-90"
+              className="flex items-center gap-2.5 text-lg font-extrabold tracking-tight hover:opacity-90 transition-opacity"
             >
               <img
                 src="/logo.png"
                 alt="QuizCrack Logo"
-                className="h-8 w-auto rounded-lg object-contain"
+                className="h-7 sm:h-8 w-auto rounded-lg object-contain shadow-sm"
               />
-              <span className="bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500 bg-clip-text text-transparent">
-                QuizCrack
+              <span className="font-black tracking-tight text-foreground">
+                Quiz<span className="woblo-gradient-text animate-gradient-shift">Crack</span>
               </span>
-              <Badge variant="outline" className="border-indigo-500/30 text-indigo-500 text-[9px] px-1 py-0 h-4">
-                PREMIUM
-              </Badge>
+              <span className="woblo-badge hidden sm:inline-flex text-[9px] uppercase tracking-wider py-0.5 px-2">
+                AI PRO
+              </span>
             </button>
           </div>
 
-          <div className="flex items-center gap-2.5 md:gap-3.5">
-            {/* Desktop Navbar Actions */}
+          {/* Desktop Navigation Link Pills */}
+          <div className="hidden lg:flex items-center gap-1.5 mx-auto">
+            {[
+              { id: "generate", label: "MCQ Generator" },
+              { id: "study-material", label: "Study Notes" },
+              { id: "dashboard", label: "Dashboard" },
+              { id: "mock-tests", label: "Mock Tests" },
+              { id: "recent-activity", label: "Recent Files" },
+              { id: "settings", label: "Settings" },
+            ].map((nav) => {
+              const isActive = activeTab === nav.id;
+              return (
+                <button
+                  key={nav.id}
+                  onClick={() => {
+                    setActiveTab(nav.id as Tab);
+                    if (nav.id === "study-material") {
+                      setTargetCreationMode("study-material");
+                      if (studyMaterial) setStage("study-material-preview");
+                      else if (pdf) setStage("study-material-configuring");
+                      else setStage("upload");
+                    } else if (nav.id === "generate") {
+                      setTargetCreationMode("mcq");
+                      if (stage === "results") setStage("upload");
+                      else if (mcqs.length > 0) setStage("review");
+                      else if (pdf) setStage("configuring");
+                      else setStage("upload");
+                    }
+                  }}
+                  className={`px-3.5 py-1.5 text-xs font-semibold rounded-full transition-all ${
+                    isActive
+                      ? "bg-primary text-white shadow-[0_0_16px_rgba(26,64,255,0.35)]"
+                      : "text-muted-foreground hover:text-foreground hover:bg-white/[0.04]"
+                  }`}
+                >
+                  {nav.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Desktop Upload Button */}
             <Button
               onClick={() => globalFileInputRef.current?.click()}
-              className="hidden md:flex bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-semibold shadow-md hover:scale-[1.02] active:scale-[0.98] transition gap-1.5 h-9"
+              className="hidden sm:flex bg-primary hover:bg-primary/90 text-white font-semibold shadow-[0_0_20px_rgba(26,64,255,0.35)] hover:-translate-y-0.5 active:translate-y-0 transition gap-1.5 h-9 px-4 rounded-full text-xs"
             >
-              <PlusCircle className="h-4 w-4" />
-              <span>Upload PDF</span>
+              <PlusCircle className="h-3.5 w-3.5" />
+              <span>Upload Document</span>
             </Button>
 
-            {/* Profile/Auth Button (Navbar Shortcuts) */}
+            {/* Profile / Account Shortcut */}
             <Button
               variant={activeTab === "profile" ? "secondary" : "ghost"}
               size="sm"
-              className="gap-2 h-9 border border-border/30"
+              className="gap-2 h-9 px-3 rounded-full border border-border/60 text-xs"
               onClick={() => setActiveTab("profile")}
             >
-              <User className="h-4 w-4 text-indigo-500" />
+              <User className="h-3.5 w-3.5 text-primary" />
               <span className="hidden sm:inline font-medium">
                 {user ? user.email.split("@")[0] : "Sign In"}
               </span>
             </Button>
 
-            <div className="h-4 w-px bg-border/60" />
+            <div className="h-4 w-px bg-border/60 hidden sm:block" />
 
-            <Button variant="ghost" size="icon" onClick={toggleTheme} className="rounded-full h-8 w-8">
+            {/* Dark Mode Toggle */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={toggleTheme}
+              className="rounded-full h-8 w-8 hover:bg-white/[0.06]"
+              title={darkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}
+            >
               {darkMode ? (
                 <Sun className="h-4 w-4 text-amber-400" />
               ) : (
-                <Moon className="h-4 w-4 text-indigo-500" />
+                <Moon className="h-4 w-4 text-primary" />
               )}
             </Button>
           </div>
@@ -1644,23 +1700,22 @@ function App() {
       </header>
 
       {/* Main Body Layout */}
-      <div className="flex flex-1 flex-row relative">
-        
+      <div className="flex flex-1 flex-row relative z-10">
         {/* Left Sidebar (Desktop collapsible) */}
         <aside
-          className={`hidden md:flex flex-col border-r border-border bg-card/30 backdrop-blur-sm transition-all duration-300 shrink-0 ${
+          className={`hidden md:flex flex-col border-r border-border/80 bg-card/40 backdrop-blur-xl transition-all duration-300 shrink-0 ${
             sidebarCollapsed ? "w-16" : "w-60"
           }`}
         >
           <div className="p-3 flex flex-col gap-1.5 flex-1">
             {[
-              { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+              { id: "generate", label: "MCQ Generator", icon: FileText },
               { id: "study-material", label: "Study Material", icon: GraduationCap },
-              { id: "generate", label: "Generate Quiz", icon: FileText },
-              { id: "recent-activity", label: "Recent Activity", icon: History },
+              { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+              { id: "recent-activity", label: "Recent Library", icon: History },
               { id: "mock-tests", label: "Mock Tests", icon: Trophy },
               { id: "settings", label: "Settings", icon: SettingsIcon },
-              { id: "profile", label: "Profile / Cloud", icon: User },
+              { id: "profile", label: "Profile & Cloud", icon: User },
             ].map((t) => {
               const Icon = t.icon;
               const isActive = activeTab === t.id;
@@ -1671,13 +1726,9 @@ function App() {
                     setActiveTab(t.id as Tab);
                     if (t.id === "study-material") {
                       setTargetCreationMode("study-material");
-                      if (studyMaterial) {
-                        setStage("study-material-preview");
-                      } else if (pdf) {
-                        setStage("study-material-configuring");
-                      } else {
-                        setStage("upload");
-                      }
+                      if (studyMaterial) setStage("study-material-preview");
+                      else if (pdf) setStage("study-material-configuring");
+                      else setStage("upload");
                     } else if (t.id === "generate") {
                       setTargetCreationMode("mcq");
                       if (stage === "results") setStage("upload");
@@ -1686,14 +1737,14 @@ function App() {
                       else setStage("upload");
                     }
                   }}
-                  className={`flex items-center gap-3.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-2xl text-xs font-semibold transition-all ${
                     isActive
-                      ? "bg-indigo-500/10 text-indigo-500 font-semibold"
-                      : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
+                      ? "bg-primary text-white shadow-[0_0_18px_rgba(26,64,255,0.35)]"
+                      : "text-muted-foreground hover:text-foreground hover:bg-white/[0.04]"
                   }`}
                   title={t.label}
                 >
-                  <Icon className="h-5 w-5 shrink-0" />
+                  <Icon className="h-4 w-4 shrink-0" />
                   {!sidebarCollapsed && <span className="truncate">{t.label}</span>}
                 </button>
               );
@@ -1705,15 +1756,15 @@ function App() {
             <Button
               variant="ghost"
               size="sm"
-              className="w-full justify-center gap-2"
+              className="w-full justify-center gap-2 h-8 rounded-xl text-xs"
               onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
             >
               <ChevronRight
-                className={`h-4 w-4 transition-transform duration-300 ${
+                className={`h-3.5 w-3.5 transition-transform duration-300 ${
                   sidebarCollapsed ? "" : "rotate-180"
                 }`}
               />
-              {!sidebarCollapsed && <span className="text-xs">Collapse</span>}
+              {!sidebarCollapsed && <span>Collapse Sidebar</span>}
             </Button>
           </div>
         </aside>
@@ -2773,43 +2824,75 @@ function UploadStage({
       : "Drop any study guide, textbook, PDF, or Word document (.pdf, .doc, .docx). Our AI parses text and generates custom exam questions.");
 
   return (
-    <div className="space-y-8 max-w-4xl mx-auto animate-fade-in">
-      <div className="space-y-3 text-center">
+    <div className="space-y-10 max-w-5xl mx-auto animate-fade-in py-4">
+      {/* Woblo Hero Header */}
+      <div className="flex flex-col items-center text-center">
+        <div className="woblo-badge mb-4">
+          <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+          <span>THE #1 AI EXAM & STUDY MATERIAL ENGINE</span>
+        </div>
+
+        <h1
+          className="text-[34px] sm:text-[48px] md:text-[58px] text-foreground font-black uppercase text-center mb-3 leading-[38px] sm:leading-[52px] md:leading-[60px]"
+          style={{ letterSpacing: "-0.03em" }}
+        >
+          <div className="sm:hidden">
+            <div>The #1 Most Powerful</div>
+            <div>AI Exam & Study</div>
+            <span className="woblo-gradient-text animate-gradient-shift">Engine</span>
+          </div>
+          <div className="hidden sm:block">
+            The #1 Most Powerful AI Exam & Study{" "}
+            <span className="woblo-gradient-text animate-gradient-shift">Engine</span>
+          </div>
+        </h1>
+
+        <p className="text-muted-foreground font-medium text-center max-w-xl mx-auto mb-6 text-sm sm:text-base leading-relaxed">
+          {displaySubtitle}
+        </p>
+
+        {/* Woblo Hero CTA Button */}
+        <div className="flex flex-wrap items-center justify-center gap-3 mb-6">
+          <Button
+            variant="wobloHero"
+            size="hero"
+            onClick={() => !busy && inputRef.current?.click()}
+            className="cursor-pointer"
+          >
+            Upload Document →
+          </Button>
+        </div>
+
+        {/* Mode Selector Pill */}
         {onSelectMode && (
-          <div className="inline-flex items-center gap-1.5 p-1 bg-muted/60 rounded-full border border-border/60 text-xs font-semibold mb-2">
-            <button
-              onClick={() => onSelectMode("study-material")}
-              className={`px-3.5 py-1.5 rounded-full transition-all flex items-center gap-1.5 ${
-                mode === "study-material"
-                  ? "bg-indigo-600 text-white shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <GraduationCap className="h-3.5 w-3.5" />
-              <span>📚 Study Material</span>
-            </button>
+          <div className="inline-flex items-center gap-1 p-1 bg-secondary/80 rounded-full border border-border/80 text-xs font-semibold backdrop-blur-md">
             <button
               onClick={() => onSelectMode("mcq")}
-              className={`px-3.5 py-1.5 rounded-full transition-all flex items-center gap-1.5 ${
+              className={`px-4 py-2 rounded-full transition-all flex items-center gap-2 font-bold ${
                 mode === "mcq"
-                  ? "bg-purple-600 text-white shadow-sm"
+                  ? "bg-primary text-white shadow-[0_0_16px_rgba(26,64,255,0.4)]"
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
               <FileText className="h-3.5 w-3.5" />
-              <span>📝 Quizzes (MCQs)</span>
+              <span>📝 MCQ Quiz Mode</span>
+            </button>
+            <button
+              onClick={() => onSelectMode("study-material")}
+              className={`px-4 py-2 rounded-full transition-all flex items-center gap-2 font-bold ${
+                mode === "study-material"
+                  ? "bg-primary text-white shadow-[0_0_16px_rgba(26,64,255,0.4)]"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <GraduationCap className="h-3.5 w-3.5" />
+              <span>📚 Full Study Notes Mode</span>
             </button>
           </div>
         )}
-
-        <h1 className="text-4xl font-extrabold tracking-tight md:text-5xl bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500 bg-clip-text text-transparent">
-          {displayTitle}
-        </h1>
-        <p className="mx-auto max-w-2xl text-muted-foreground">
-          {displaySubtitle}
-        </p>
       </div>
 
+      {/* Woblo Glass Drag & Drop Zone */}
       <Card
         onDragOver={(e) => {
           e.preventDefault();
@@ -2822,20 +2905,32 @@ function UploadStage({
           const file = e.dataTransfer.files?.[0];
           if (file) void handleFile(file);
         }}
-        className={`border-2 border-dashed p-14 text-center cursor-pointer transition-all duration-300 relative overflow-hidden bg-card/40 backdrop-blur-sm ${
+        className={`woblo-glass border-2 border-dashed p-10 sm:p-14 text-center cursor-pointer transition-all duration-300 relative overflow-hidden rounded-3xl ${
           dragging
-            ? "border-primary bg-indigo-500/10 scale-[0.99]"
-            : "border-border hover:border-indigo-500/50 hover:bg-card/60"
+            ? "border-primary bg-primary/10 scale-[0.99] shadow-[0_0_40px_rgba(26,64,255,0.25)]"
+            : "border-white/15 hover:border-primary/60 hover:shadow-[0_0_30px_rgba(26,64,255,0.12)]"
         }`}
         onClick={() => !busy && inputRef.current?.click()}
       >
-        <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-indigo-500/10 text-indigo-500 shadow-md">
-          {mode === "study-material" ? <GraduationCap className="h-7 w-7" /> : <Upload className="h-7 w-7" />}
+        <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-primary/10 text-primary border border-primary/20 shadow-inner">
+          {mode === "study-material" ? <GraduationCap className="h-8 w-8" /> : <Upload className="h-8 w-8" />}
         </div>
-        <h2 className="mt-5 text-xl font-bold tracking-tight">Drag & drop your PDF, DOC, or DOCX file here</h2>
-        <p className="mt-2 text-sm text-muted-foreground max-w-sm mx-auto">
-          or click to browse your local files (Supports PDF, Word .doc & .docx files up to 100MB)
+        
+        <h2 className="mt-5 text-xl sm:text-2xl font-bold tracking-tight text-foreground">
+          Drag & drop your PDF, DOC, or DOCX file here
+        </h2>
+        <p className="mt-2 text-sm text-muted-foreground max-w-md mx-auto leading-relaxed">
+          or click to browse your local computer (Supports PDF, Word .doc & .docx files up to 100MB)
         </p>
+
+        {/* Supported Format Pills */}
+        <div className="flex flex-wrap items-center justify-center gap-2 mt-6">
+          <span className="woblo-badge text-[10px] text-white/80">📄 PDF Documents</span>
+          <span className="woblo-badge text-[10px] text-white/80">📝 Word (.docx, .doc)</span>
+          <span className="woblo-badge text-[10px] text-white/80">🔍 OCR Image Extraction</span>
+          <span className="woblo-badge text-[10px] text-white/80">🌐 Multilingual (Tamil, Hindi, etc.)</span>
+        </div>
+
         <input
           ref={inputRef}
           type="file"
@@ -2848,41 +2943,59 @@ function UploadStage({
         />
 
         {busy && (
-          <div className="absolute inset-0 bg-background/90 backdrop-blur-sm flex flex-col items-center justify-center p-8 z-10">
-            <Loader2 className="h-10 w-10 animate-spin text-primary mb-4" />
+          <div className="absolute inset-0 bg-background/90 backdrop-blur-md flex flex-col items-center justify-center p-8 z-20 animate-fade-in">
+            <div className="relative mx-auto w-14 h-14 flex items-center justify-center mb-3">
+              <div className="absolute inset-0 rounded-full bg-primary/20 animate-ping" />
+              <Loader2 className="h-8 w-8 animate-spin text-primary relative z-10" />
+            </div>
             <h3 className="text-lg font-bold tracking-tight">{stageName}</h3>
             <div className="w-full max-w-md mt-4">
               <Progress value={progress} className="h-2" />
-              <p className="text-xs text-muted-foreground text-right mt-1.5">
-                {progress}% completed
-              </p>
+              <div className="flex justify-between text-xs text-muted-foreground mt-1.5 font-medium">
+                <span>Extracting all pages...</span>
+                <span>{progress}%</span>
+              </div>
             </div>
           </div>
         )}
       </Card>
 
+      {/* Woblo 3 Feature Cards Grid */}
       <div className="grid gap-6 md:grid-cols-3">
         {[
           {
             icon: BookOpen,
-            title: "Parallel Extraction",
-            body: "Processes all PDF pages concurrently for maximum processing throughput.",
+            title: "Parallel Page Extraction",
+            body: "Processes entire documents in parallel chunks for instantaneous loading and zero data loss.",
+            badge: "HIGH SPEED",
           },
           {
             icon: Sparkles,
-            title: "Tesseract OCR Fallback",
-            body: "Extracts text from scanned pages, notes, and photos using AI-powered image recognition.",
+            title: "Tesseract OCR Engine",
+            body: "Extracts text from scanned pages, photocopied notes, and mobile photos with AI recognition.",
+            badge: "AI VISION",
           },
           {
             icon: Play,
-            title: "Instant Cached Loads",
-            body: "Re-uploading files instantly retrieves cached extractions from browser memory.",
+            title: "Instant Cached Retrieval",
+            body: "Previously uploaded files load instantly from memory without redundant reprocessing.",
+            badge: "ZERO DELAY",
           },
         ].map((f, i) => (
-          <Card key={i} className="p-6 bg-card/40 backdrop-blur-sm border-border">
-            <f.icon className="h-6 w-6 text-indigo-500" />
-            <h3 className="mt-4 font-bold tracking-tight text-base">{f.title}</h3>
-            <p className="mt-2 text-sm text-muted-foreground leading-relaxed">{f.body}</p>
+          <Card
+            key={i}
+            className="p-6 bg-card/60 backdrop-blur-md border border-border/80 rounded-3xl prompt-card-hover flex flex-col justify-between"
+          >
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <div className="h-10 w-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary">
+                  <f.icon className="h-5 w-5" />
+                </div>
+                <span className="woblo-badge text-[9px] uppercase tracking-wider">{f.badge}</span>
+              </div>
+              <h3 className="font-bold tracking-tight text-base text-foreground">{f.title}</h3>
+              <p className="mt-2 text-xs sm:text-sm text-muted-foreground leading-relaxed">{f.body}</p>
+            </div>
           </Card>
         ))}
       </div>
