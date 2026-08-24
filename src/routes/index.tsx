@@ -66,6 +66,7 @@ import { StudyMaterialConfigureStage } from "@/components/StudyMaterialConfigure
 import { generateStudyMaterialPdf, generateStudyMaterialWord } from "@/lib/study-material.pdf";
 
 import html2canvas from "html2canvas";
+import Strands from "@/components/Strands";
 
 // Import export libraries
 import { jsPDF } from "jspdf";
@@ -1529,6 +1530,21 @@ function App() {
     <div className="min-h-screen bg-background text-foreground transition-colors duration-200 flex flex-col relative overflow-x-hidden">
       <Toaster richColors position="top-right" />
 
+      {/* React Bits Strands Dynamic WebGL Ribbon Animation Background */}
+      <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden opacity-35">
+        <Strands
+          colors={["#1a40ff", "#7c3aed", "#06b6d4", "#ec4899"]}
+          count={5}
+          speed={0.45}
+          amplitude={1.1}
+          waviness={1.2}
+          thickness={0.8}
+          glow={2.8}
+          scale={1.3}
+          opacity={0.7}
+        />
+      </div>
+
       {/* Woblo Atmospheric Ambient Glowing Background Orbs */}
       <div className="woblo-glow-mesh w-[600px] h-[350px] top-[-120px] left-1/2 -translate-x-1/2 bg-[radial-gradient(circle,rgba(26,64,255,0.18)_0%,rgba(139,92,246,0.12)_45%,transparent_70%)] pointer-events-none" />
       <div className="woblo-glow-mesh w-[450px] h-[350px] top-[35%] right-[-100px] bg-[radial-gradient(circle,rgba(232,64,13,0.09)_0%,rgba(208,178,255,0.08)_50%,transparent_70%)] pointer-events-none" />
@@ -2825,71 +2841,87 @@ function UploadStage({
 
   return (
     <div className="space-y-10 max-w-5xl mx-auto animate-fade-in py-4">
-      {/* Woblo Hero Header */}
-      <div className="flex flex-col items-center text-center">
-        <div className="woblo-badge mb-4">
-          <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-          <span>THE #1 AI EXAM & STUDY MATERIAL ENGINE</span>
+      {/* Woblo Hero Header with Strands Ribbon Backdrop */}
+      <div className="flex flex-col items-center text-center relative py-4">
+        <div className="absolute inset-x-0 -top-10 h-80 pointer-events-none z-0 opacity-65 overflow-hidden">
+          <Strands
+            colors={["#1a40ff", "#7c3aed", "#06b6d4", "#ec4899", "#3b82f6"]}
+            count={4}
+            speed={0.5}
+            amplitude={1.2}
+            waviness={1.4}
+            thickness={0.8}
+            glow={3.0}
+            scale={1.2}
+            opacity={0.85}
+          />
         </div>
 
-        <h1
-          className="text-[34px] sm:text-[48px] md:text-[58px] text-foreground font-black uppercase text-center mb-3 leading-[38px] sm:leading-[52px] md:leading-[60px]"
-          style={{ letterSpacing: "-0.03em" }}
-        >
-          <div className="sm:hidden">
-            <div>The #1 Most Powerful</div>
-            <div>AI Exam & Study</div>
-            <span className="woblo-gradient-text animate-gradient-shift">Engine</span>
+        <div className="relative z-10 flex flex-col items-center">
+          <div className="woblo-badge mb-4">
+            <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span>THE #1 AI EXAM & STUDY MATERIAL ENGINE</span>
           </div>
-          <div className="hidden sm:block">
-            The #1 Most Powerful AI Exam & Study{" "}
-            <span className="woblo-gradient-text animate-gradient-shift">Engine</span>
-          </div>
-        </h1>
 
-        <p className="text-muted-foreground font-medium text-center max-w-xl mx-auto mb-6 text-sm sm:text-base leading-relaxed">
-          {displaySubtitle}
-        </p>
-
-        {/* Woblo Hero CTA Button */}
-        <div className="flex flex-wrap items-center justify-center gap-3 mb-6">
-          <Button
-            variant="wobloHero"
-            size="hero"
-            onClick={() => !busy && inputRef.current?.click()}
-            className="cursor-pointer"
+          <h1
+            className="text-[34px] sm:text-[48px] md:text-[58px] text-foreground font-black uppercase text-center mb-3 leading-[38px] sm:leading-[52px] md:leading-[60px]"
+            style={{ letterSpacing: "-0.03em" }}
           >
-            Upload Document →
-          </Button>
-        </div>
+            <div className="sm:hidden">
+              <div>The #1 Most Powerful</div>
+              <div>AI Exam & Study</div>
+              <span className="woblo-gradient-text animate-gradient-shift">Engine</span>
+            </div>
+            <div className="hidden sm:block">
+              The #1 Most Powerful AI Exam & Study{" "}
+              <span className="woblo-gradient-text animate-gradient-shift">Engine</span>
+            </div>
+          </h1>
 
-        {/* Mode Selector Pill */}
-        {onSelectMode && (
-          <div className="inline-flex items-center gap-1 p-1 bg-secondary/80 rounded-full border border-border/80 text-xs font-semibold backdrop-blur-md">
-            <button
-              onClick={() => onSelectMode("mcq")}
-              className={`px-4 py-2 rounded-full transition-all flex items-center gap-2 font-bold ${
-                mode === "mcq"
-                  ? "bg-primary text-white shadow-[0_0_16px_rgba(26,64,255,0.4)]"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
+          <p className="text-muted-foreground font-medium text-center max-w-xl mx-auto mb-6 text-sm sm:text-base leading-relaxed">
+            {displaySubtitle}
+          </p>
+
+          {/* Woblo Hero CTA Button */}
+          <div className="flex flex-wrap items-center justify-center gap-3 mb-6">
+            <Button
+              variant="wobloHero"
+              size="hero"
+              onClick={() => !busy && inputRef.current?.click()}
+              className="cursor-pointer"
             >
-              <FileText className="h-3.5 w-3.5" />
-              <span>📝 MCQ Quiz Mode</span>
-            </button>
-            <button
-              onClick={() => onSelectMode("study-material")}
-              className={`px-4 py-2 rounded-full transition-all flex items-center gap-2 font-bold ${
-                mode === "study-material"
-                  ? "bg-primary text-white shadow-[0_0_16px_rgba(26,64,255,0.4)]"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <GraduationCap className="h-3.5 w-3.5" />
-              <span>📚 Full Study Notes Mode</span>
-            </button>
+              Upload Document →
+            </Button>
           </div>
-        )}
+
+          {/* Mode Selector Pill */}
+          {onSelectMode && (
+            <div className="inline-flex items-center gap-1 p-1 bg-secondary/80 rounded-full border border-border/80 text-xs font-semibold backdrop-blur-md">
+              <button
+                onClick={() => onSelectMode("mcq")}
+                className={`px-4 py-2 rounded-full transition-all flex items-center gap-2 font-bold ${
+                  mode === "mcq"
+                    ? "bg-primary text-white shadow-[0_0_16px_rgba(26,64,255,0.4)]"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <FileText className="h-3.5 w-3.5" />
+                <span>📝 MCQ Quiz Mode</span>
+              </button>
+              <button
+                onClick={() => onSelectMode("study-material")}
+                className={`px-4 py-2 rounded-full transition-all flex items-center gap-2 font-bold ${
+                  mode === "study-material"
+                    ? "bg-primary text-white shadow-[0_0_16px_rgba(26,64,255,0.4)]"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <GraduationCap className="h-3.5 w-3.5" />
+                <span>📚 Full Study Notes Mode</span>
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Woblo Animated Infinite Marquee Ticker */}
