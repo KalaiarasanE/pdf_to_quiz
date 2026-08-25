@@ -28,7 +28,14 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-import { StudyMaterialData, StudyMaterialChapter, StudyMaterialSection } from "@/lib/study-material.types";
+import {
+  StudyMaterialData,
+  StudyMaterialChapter,
+  StudyMaterialSection,
+  filterEducationalChapters,
+  cleanDocumentTitle,
+  isArtificialSubtitle,
+} from "@/lib/study-material.types";
 import { generateStudyMaterialPdf, generateStudyMaterialWord } from "@/lib/study-material.pdf";
 
 interface StudyMaterialViewProps {
@@ -58,10 +65,16 @@ export function StudyMaterialView({
     if (onUpdateMaterial) onUpdateMaterial(newMaterial);
   };
 
+  const cleanChapters = useMemo(() => filterEducationalChapters(material.chapters), [material.chapters]);
+  const cleanTitle = useMemo(
+    () => cleanDocumentTitle(material.title, cleanChapters[0]?.chapterTitle),
+    [material.title, cleanChapters],
+  );
+
   const filteredChapters = useMemo(() => {
-    if (!searchQuery.trim()) return material.chapters;
+    if (!searchQuery.trim()) return cleanChapters;
     const q = searchQuery.toLowerCase();
-    return material.chapters
+    return cleanChapters
       .map((ch) => {
         const matchesChapter = ch.chapterTitle.toLowerCase().includes(q) || (ch.summary && ch.summary.toLowerCase().includes(q));
         const filteredSections = ch.sections.filter((sec) => {
@@ -84,12 +97,13 @@ export function StudyMaterialView({
         return null;
       })
       .filter(Boolean) as StudyMaterialChapter[];
-  }, [material.chapters, searchQuery]);
+  }, [cleanChapters, searchQuery]);
 
   // Copy Full Material to Clipboard
   const handleCopyAll = () => {
-    let plain = `# ${material.title}\n${material.subtitle || ""}\n\n`;
-    for (const ch of material.chapters) {
+    const hasValidSubtitle = material.subtitle && !isArtificialSubtitle(material.subtitle);
+    let plain = `# ${cleanTitle}\n${hasValidSubtitle ? material.subtitle + "\n\n" : "\n"}`;
+    for (const ch of cleanChapters) {
       plain += `## ${ch.chapterTitle}\n${ch.summary ? ch.summary + "\n\n" : ""}`;
       for (const sec of ch.sections) {
         plain += `### ${sec.title}\n`;
@@ -242,7 +256,7 @@ export function StudyMaterialView({
 
         <div className="flex items-center gap-1.5 overflow-x-auto max-w-full pb-1 sm:pb-0 scrollbar-thin">
           <span className="text-xs text-muted-foreground font-semibold shrink-0">Chapters:</span>
-          {material.chapters.map((ch, idx) => (
+          {cleanChapters.map((ch, idx) => (
             <button
               key={idx}
               onClick={() => {
@@ -262,36 +276,10 @@ export function StudyMaterialView({
         </div>
       </div>
 
-      {/* 📖 A4 EDUCATIONAL PUBLICATION DOCUMENT PREVIEW */}
+      {/* 📖 A4 EDUCATIONAL DOCUMENT PREVIEW */}
       <div className="bg-white text-slate-900 rounded-2xl shadow-xl border border-slate-200 p-6 md:p-12 font-sans select-text">
         {/* Document Header Bar */}
         <div className="border-b-2 border-indigo-500 pb-6 mb-8">
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-            <div className="flex items-center gap-2">
-              <span className="px-3 py-1 bg-indigo-600 text-white font-bold text-xs rounded-md uppercase tracking-wider">
-                STUDY MATERIAL
-              </span>
-              <span className="px-2.5 py-1 bg-slate-100 text-slate-700 font-semibold text-xs rounded-md border border-slate-200 uppercase">
-                {material.language || "Unicode"}
-              </span>
-              {material.totalPages && (
-                <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 font-semibold text-xs rounded-md border border-emerald-200">
-                  {material.totalPages} Pages Covered
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-4 text-xs text-slate-500">
-              <span className="flex items-center gap-1">
-                <BookOpen className="h-3.5 w-3.5 text-indigo-500" />
-                {material.chapters.length} Chapters
-              </span>
-              <span className="flex items-center gap-1">
-                <Clock className="h-3.5 w-3.5 text-indigo-500" />
-                ~{material.estimated_read_time_minutes || 10} min revision
-              </span>
-            </div>
-          </div>
-
           {/* Document Title */}
           {isEditing ? (
             <Input
@@ -301,22 +289,16 @@ export function StudyMaterialView({
             />
           ) : (
             <h1 className="text-2xl md:text-4xl font-black tracking-tight text-slate-900 leading-tight">
-              {material.title}
+              {cleanTitle}
             </h1>
           )}
 
-          {/* Document Subtitle */}
-          <p className="text-sm md:text-base text-slate-600 mt-2 font-medium">
-            {material.subtitle || "Complete Document Study Notes & Quick Revision Guide"}
-          </p>
-
-          {/* Source Document Tag */}
-          <div className="mt-4 inline-flex items-center gap-2 px-3 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-500">
-            <span>Source Document:</span>
-            <span className="font-semibold text-slate-800 truncate max-w-xs md:max-w-md">
-              {material.pdf_name}
-            </span>
-          </div>
+          {/* Document Subtitle (only if valid educational subtitle) */}
+          {material.subtitle && !isArtificialSubtitle(material.subtitle) && (
+            <p className="text-sm md:text-base text-slate-600 mt-2 font-medium">
+              {material.subtitle}
+            </p>
+          )}
         </div>
 
         {/* Chapters Content Container */}
@@ -571,12 +553,6 @@ export function StudyMaterialView({
               </div>
             </div>
           ))}
-        </div>
-
-        {/* Document Footer Note */}
-        <div className="mt-12 pt-6 border-t border-slate-200 flex flex-wrap items-center justify-between text-xs text-slate-400">
-          <span>QuizCrack AI Study Material Series • Educational Revision Document</span>
-          <span>© {new Date().getFullYear()} QuizCrack. All rights reserved.</span>
         </div>
       </div>
     </div>

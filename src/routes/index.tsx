@@ -1510,7 +1510,10 @@ function App() {
     });
   };
 
-  const logActivity = (type: "upload" | "generate" | "test" | "download", detail: string) => {
+  const logActivity = (
+    type: "upload" | "generate" | "study-material" | "test" | "download",
+    detail: string,
+  ) => {
     updateStats((prev) => {
       const logs = [
         {
@@ -3097,6 +3100,7 @@ function ConfigureStage({
   onBack,
   onStartGenerating,
   onFinished,
+  onSwitchToStudyMaterial,
   selectedLanguage,
   setSelectedLanguage,
 }: ConfigureProps) {
@@ -5111,7 +5115,7 @@ function RecentActivity({
         const matchSearch =
           (m.title || "").toLowerCase().includes(search.toLowerCase()) ||
           (m.pdf_name || "").toLowerCase().includes(search.toLowerCase()) ||
-          m.chapters.some((c) => c.title.toLowerCase().includes(search.toLowerCase()));
+          m.chapters.some((c) => (c.chapterTitle || "").toLowerCase().includes(search.toLowerCase()));
         const matchLang = langFilter === "All" || m.language === langFilter;
         return matchSearch && matchLang;
       })

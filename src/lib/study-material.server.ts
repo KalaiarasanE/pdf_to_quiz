@@ -3,6 +3,11 @@ import {
   StudyMaterialData,
   StudyMaterialSection,
   StudyMaterialStreamProgress,
+  filterEducationalChapters,
+  filterEducationalSections,
+  cleanDocumentTitle,
+  isNonEducationalSectionTitle,
+  isNonEducationalText,
 } from "./study-material.types";
 
 export interface StudyMaterialConfig {
@@ -180,15 +185,60 @@ export async function* generateStudyMaterialStream(
     const systemPrompt = `You are a world-class educational author and competitive exam preparation expert (UPSC, TNPSC, SSC, State PSCs, University Exams).
 Your mission is to transform raw PDF page content into comprehensive, high-yield, exam-oriented study material that students can rapidly study and revise.
 
-CRITICAL FULL-PAGE COVERAGE RULES:
-1. DO NOT summarize or compress this content into a brief 1-page summary.
-2. The user has specifically requested FULL coverage of EVERY page in this document.
-3. Read EVERY concept, theory, statutory act, constitutional article, historical event, formula, percentage, date, definition, and example on the provided page(s).
-4. Convert all long paragraphs into structured, easy-to-read study points with subheadings.
-5. PRESERVE 100% of all facts, dates, names, scientific terms, formulas, and definitions. ZERO content loss.
-6. LANGUAGE RULE: ${languageInstruction}
-7. STRUCTURE TO INCLUDE (Only include sections that are actually relevant to the content; DO NOT create empty sections):
-   - "introduction": 2-3 sentence overview of this specific chapter/topic's significance.
+CRITICAL CONTENT FILTERING & PURITY RULES:
+1. STRICT EXCLUSION OF COPYRIGHT & LEGAL CONTENT:
+   - NEVER include or reproduce sections/points such as:
+     * Copyright notices, copyright years, "All rights reserved"
+     * "Copyright and Usage Guidelines"
+     * Terms and conditions, terms of service/use
+     * Unauthorized reproduction notices & copying warnings
+     * Legal disclaimers & liability notices
+     * Government ownership statements
+     * Website/platform information, URLs, hosting details, source links
+     * Contact info, helpline numbers, email addresses, social media/telegram handles
+     * Licensing information, creative commons notices
+     * "This material is provided as a free service" or similar statements
+     * Any other administrative, promotional, or legal boilerplate.
+   - These non-educational sections MUST NOT appear in the generated study material.
+
+2. REMOVE THE ORIGINAL INTRODUCTION / OVERVIEW / PREFACE:
+   - Do NOT copy or reproduce the original PDF's introductory overview, preface, "curated by" description, opening summary, or administrative preface (e.g., "Overview of Study Material...", "This study material is curated by...", "Copyright and Usage Guidelines...").
+   - Start the generated Study Material DIRECTLY with the actual educational subject/topic (e.g., "Historical Background of Indian Constitution", "General Aptitude", "Human Circulatory System").
+   - The "documentTitle" MUST be the actual educational subject/topic name, NEVER "Overview of Study Material", NEVER the filename, and NEVER generic administrative text.
+   - The "chapterTitle" MUST be the specific educational subject/topic covered on those pages.
+
+3. DO NOT ADD ARTIFICIAL COVER INFORMATION:
+   - Do NOT add cover headers, language badges, "X PAGES COVERED", generated page counts, source document info, AI branding, copyright text, or decorative introductory pages.
+   - Start immediately with the first educational topic.
+
+4. KEEP ONLY EDUCATIONAL & EXAM CONTENT:
+   - Include exclusively useful learning and exam-oriented content:
+     * Main topics and subtopics
+     * Concepts and core principles
+     * Clear definitions
+     * Important facts, data points, statistics, statutory acts, and constitutional articles
+     * Chronological dates & historical milestones
+     * Names of key personalities/contributors and their roles
+     * Formulas and scientific values
+     * Practical examples
+     * Exam-oriented high-yield points & traps
+     * Comparative tables
+     * Quick revision memory triggers (Key → Value)
+
+5. PRESERVE EDUCATIONAL CONTENT NEAR BEGINNING & END:
+   - Do NOT remove actual educational content just because it appears near the beginning or end of the document.
+   - ONLY remove clearly identifiable non-educational content (copyright, legal, platform info, administrative, and original preface/overview).
+
+6. FULL-PAGE COVERAGE & DEPTH:
+   - DO NOT compress this content into a brief 1-page summary.
+   - Read EVERY educational concept, statutory act, constitutional article, event, formula, date, and definition on the provided page(s).
+   - Convert long paragraphs into structured, crisp study points with bold subheadings.
+   - PRESERVE 100% of all educational facts, dates, names, formulas, and definitions. ZERO content loss.
+
+7. LANGUAGE RULE: ${languageInstruction}
+
+8. STRUCTURE TO INCLUDE (Only include sections that are actually relevant to the content; DO NOT create empty sections):
+   - "introduction": 2-3 sentence overview of this specific topic's educational significance (NOT the PDF document's preface).
    - "concepts": Key principles/theories broken down into structured bullet points with bold subheadings.
    - "points": Core factual points and analytical takeaways.
    - "facts": Specific data points, numbers, statistics, constitutional articles, or scientific values.
@@ -205,14 +255,14 @@ Return STRICT JSON ONLY. No markdown wrappers (\`\`\`json), no commentary.
 
 The JSON MUST conform to this exact schema:
 {
-  "documentTitle": "Main Title of the Complete Study Material",
-  "chapterTitle": "Specific Chapter/Topic Title for ${chunk.sourcePagesLabel}",
-  "summary": "1-2 line concise summary of this chapter",
+  "documentTitle": "Actual Educational Subject/Topic Title (e.g., Historical Background of Indian Constitution)",
+  "chapterTitle": "Specific Subject/Topic Title for ${chunk.sourcePagesLabel}",
+  "summary": "1-2 line concise summary of this chapter's educational topic",
   "sections": [
     {
       "id": "sec-1",
       "type": "introduction" | "concepts" | "points" | "facts" | "dates" | "people" | "definitions" | "examples" | "exam_points" | "quick_revision" | "table",
-      "title": "Section Heading (e.g. முக்கிய கருத்துக்கள் / Important Concepts)",
+      "title": "Section Heading (e.g. Constitutional Provisions / முக்கிய கருத்துக்கள்)",
       "content": "Short text if type is introduction",
       "items": ["Point 1", "Point 2", "Point 3"],
       "keyFactList": [{"label": "Fact Label", "value": "Fact detail"}],
@@ -255,22 +305,43 @@ ${chunk.text}
       chapterData = createFallbackChapter(chunk.text, chunk.chapterNumber, globalDocTitle, chunk.sourcePagesLabel);
     }
 
+    const rawSections =
+      Array.isArray(chapterData?.sections) && chapterData.sections.length > 0
+        ? chapterData.sections.filter((s: any) => isValidSection(s))
+        : createFallbackChapter(chunk.text, chunk.chapterNumber, globalDocTitle, chunk.sourcePagesLabel).sections;
+
+    // Filter out any non-educational sections (copyright, disclaimer, terms, preface, etc.)
+    const educationalSections = filterEducationalSections(rawSections);
+
+    let cleanChapterTitle = chapterData?.chapterTitle;
+    if (!cleanChapterTitle || isNonEducationalSectionTitle(cleanChapterTitle)) {
+      cleanChapterTitle = educationalSections[0]?.title || `Chapter ${chunk.chapterNumber}: ${chunk.sourcePagesLabel} Notes`;
+    }
+
+    let cleanSummary = chapterData?.summary || "";
+    if (isNonEducationalText(cleanSummary)) {
+      cleanSummary = "";
+    }
+
     const validatedChapter: StudyMaterialChapter = {
       chapterNumber: chunk.chapterNumber,
-      chapterTitle:
-        chapterData?.chapterTitle ||
-        `Chapter ${chunk.chapterNumber}: ${chunk.sourcePagesLabel} Notes`,
-      summary: chapterData?.summary || "",
+      chapterTitle: cleanChapterTitle,
+      summary: cleanSummary,
       sourcePages: chunk.sourcePagesLabel,
       sections:
-        Array.isArray(chapterData?.sections) && chapterData.sections.length > 0
-          ? chapterData.sections.filter((s: any) => isValidSection(s))
+        educationalSections.length > 0
+          ? educationalSections
           : createFallbackChapter(chunk.text, chunk.chapterNumber, globalDocTitle, chunk.sourcePagesLabel).sections,
     };
 
+    let docTitleCandidate = chapterData?.documentTitle;
+    if (docTitleCandidate && isNonEducationalSectionTitle(docTitleCandidate)) {
+      docTitleCandidate = undefined;
+    }
+
     return {
       chapter: validatedChapter,
-      docTitle: chapterData?.documentTitle,
+      docTitle: docTitleCandidate,
     };
   }
 
@@ -292,7 +363,7 @@ ${chunk.text}
 
     for (let r = 0; r < results.length; r++) {
       const { chapter, docTitle } = results[r];
-      if (docTitle && globalDocTitle === pdfName.replace(/\.(pdf|docx?)$/i, "").replace(/[_-]/g, " ")) {
+      if (docTitle && (globalDocTitle === pdfName.replace(/\.(pdf|docx?)$/i, "").replace(/[_-]/g, " ") || isNonEducationalSectionTitle(globalDocTitle))) {
         globalDocTitle = docTitle;
       }
       completedChaptersMap.set(chapter.chapterNumber, chapter);
@@ -318,16 +389,20 @@ ${chunk.text}
     }
   }
 
-  // Sort chapters chronologically
-  const finalChapters = Array.from(completedChaptersMap.values()).sort(
+  // Sort chapters chronologically and filter out non-educational chapters
+  const rawChapters = Array.from(completedChaptersMap.values()).sort(
     (a, b) => a.chapterNumber - b.chapterNumber,
   );
+  const finalChapters = filterEducationalChapters(rawChapters);
 
   yield {
     stage: "finalizing",
     message: `Finalizing complete Study Material covering all ${docTotalPages} pages...`,
     completedChapters: finalChapters,
   };
+
+  // Clean document title to ensure it's the actual educational subject topic
+  globalDocTitle = cleanDocumentTitle(globalDocTitle, finalChapters[0]?.chapterTitle);
 
   // Calculate total points and read time
   let totalPointsCount = 0;
@@ -349,7 +424,7 @@ ${chunk.text}
     id: Math.random().toString(36).substring(2, 9),
     pdf_name: pdfName,
     title: globalDocTitle,
-    subtitle: `Complete Document Study Notes & Quick Revision Guide (${docTotalPages} Pages Covered)`,
+    subtitle: undefined,
     language: selectedLanguage || "Auto",
     totalPages: docTotalPages,
     created_at: new Date().toISOString(),
@@ -523,12 +598,14 @@ function createFallbackChapter(
   const lines = chunkText
     .split("\n")
     .map((l) => l.trim())
-    .filter((l) => l.length > 20 && !l.startsWith("---"));
+    .filter((l) => l.length > 20 && !l.startsWith("---") && !isNonEducationalText(l));
   const samplePoints = lines.slice(0, 10);
+
+  const cleanSubjectTitle = isNonEducationalSectionTitle(docTitle) ? `Topic ${chapterNum} Notes` : docTitle;
 
   return {
     chapterNumber: chapterNum,
-    chapterTitle: `Chapter ${chapterNum}: ${docTitle} (${sourcePagesLabel})`,
+    chapterTitle: `Chapter ${chapterNum}: ${cleanSubjectTitle} (${sourcePagesLabel})`,
     summary: `Comprehensive study points extracted for ${sourcePagesLabel}.`,
     sourcePages: sourcePagesLabel,
     sections: [

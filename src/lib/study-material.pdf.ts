@@ -2,7 +2,7 @@ import { jsPDF } from "jspdf";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell, WidthType, BorderStyle, ShadingType } from "docx";
 import { saveAs } from "file-saver";
 import { toast } from "sonner";
-import { StudyMaterialData } from "./study-material.types";
+import { StudyMaterialData, filterEducationalChapters, cleanDocumentTitle, isArtificialSubtitle } from "./study-material.types";
 
 export interface PdfExportOptions {
   onSuccess?: () => void;
@@ -16,9 +16,13 @@ export async function generateStudyMaterialPdf(
   const toastId = toast.loading("Generating Study Material PDF...");
 
   try {
+    // Filter educational chapters and clean document title
+    const cleanChapters = filterEducationalChapters(material.chapters);
+    const cleanTitle = cleanDocumentTitle(material.title, cleanChapters[0]?.chapterTitle);
+
     // Gather all text to check for non-Latin Unicode scripts
-    let fullText = material.title + " " + (material.subtitle || "");
-    for (const ch of material.chapters) {
+    let fullText = cleanTitle + " " + (material.subtitle || "");
+    for (const ch of cleanChapters) {
       fullText += " " + ch.chapterTitle + " " + (ch.summary || "");
       for (const sec of ch.sections) {
         fullText += " " + sec.title + " " + (sec.content || "");
@@ -159,55 +163,27 @@ export async function generateStudyMaterialPdf(
       setFont(false);
       doc.setFontSize(8);
       doc.setTextColor(148, 163, 184); // slate-400
-      doc.text("QUIZCRACK — EXAM STUDY MATERIAL", marginX, 26);
-      doc.text(material.title.slice(0, 40), pageWidth - marginX, 26, { align: "right" });
+      doc.text(cleanTitle.slice(0, 50), marginX, 26);
+      doc.text("Study Notes", pageWidth - marginX, 26, { align: "right" });
     };
 
     // ==========================================
-    // 🎨 FIRST PAGE COVER / HERO HEADER
+    // 📖 DOCUMENT TITLE & DIRECT EDUCATIONAL START
+    // (NO artificial cover page, NO "STUDY MATERIAL" / "PAGES COVERED" headers)
     // ==========================================
-    // Top Brand Pill
-    doc.setFillColor(99, 102, 241); // Indigo-500
-    doc.roundedRect(marginX, y, 95, 18, 4, 4, "F");
-    setFont(true);
-    doc.setFontSize(8);
-    doc.setTextColor(255, 255, 255);
-    doc.text("STUDY MATERIAL", marginX + 8, y + 12);
-
-    // Language Badge
-    if (material.language) {
-      doc.setFillColor(241, 245, 249); // slate-100
-      doc.roundedRect(marginX + 102, y, 60, 18, 4, 4, "F");
-      setFont(false);
-      doc.setFontSize(8);
-      doc.setTextColor(71, 85, 105);
-      doc.text(material.language.toUpperCase(), marginX + 110, y + 12);
-    }
-
-    // Pages Covered Badge
-    if (material.totalPages) {
-      doc.setFillColor(236, 253, 245); // emerald-50
-      doc.roundedRect(marginX + 168, y, 92, 18, 4, 4, "F");
-      setFont(false);
-      doc.setFontSize(8);
-      doc.setTextColor(5, 150, 105);
-      doc.text(`${material.totalPages} PAGES COVERED`, marginX + 174, y + 12);
-    }
-
-    y += 28;
 
     // Document Title (H1)
     setFont(true);
     doc.setFontSize(22);
     doc.setTextColor(15, 23, 42); // slate-900
-    const titleLines = doc.splitTextToSize(material.title, contentWidth) as string[];
+    const titleLines = doc.splitTextToSize(cleanTitle, contentWidth) as string[];
     titleLines.forEach((line) => {
       doc.text(line, marginX, y);
       y += 24;
     });
 
-    // Subtitle / Meta
-    if (material.subtitle) {
+    // Subtitle / Meta (only if valid educational subtitle)
+    if (material.subtitle && !isArtificialSubtitle(material.subtitle)) {
       setFont(false);
       doc.setFontSize(11);
       doc.setTextColor(100, 116, 139); // slate-500
@@ -218,8 +194,8 @@ export async function generateStudyMaterialPdf(
       });
     }
 
-    // Divider Line
-    y += 6;
+    // Clean Accent Divider Line
+    y += 4;
     doc.setDrawColor(99, 102, 241); // Indigo accent line
     doc.setLineWidth(2);
     doc.line(marginX, y, marginX + 60, y);
@@ -227,25 +203,13 @@ export async function generateStudyMaterialPdf(
     doc.setLineWidth(0.75);
     doc.line(marginX + 65, y, pageWidth - marginX, y);
 
-    y += 18;
-
-    // Quick Stats Bar
-    doc.setFillColor(248, 250, 252); // slate-50
-    doc.setDrawColor(226, 232, 240);
-    doc.roundedRect(marginX, y, contentWidth, 24, 4, 4, "FD");
-    setFont(false);
-    doc.setFontSize(8.5);
-    doc.setTextColor(100, 116, 139);
-    const statsText = `Chapters: ${material.chapters.length}   •   Total Key Points: ${material.total_points || "Comprehensive"}   •   Estimated Revision: ~${material.estimated_read_time_minutes || 10} mins   •   Source: ${material.pdf_name}`;
-    doc.text(statsText, marginX + 10, y + 15);
-
-    y += 34;
+    y += 20;
 
     // ==========================================
     // 📖 CHAPTERS & SECTIONS RENDERING
     // ==========================================
-    for (let cIdx = 0; cIdx < material.chapters.length; cIdx++) {
-      const ch = material.chapters[cIdx];
+    for (let cIdx = 0; cIdx < cleanChapters.length; cIdx++) {
+      const ch = cleanChapters[cIdx];
 
       // Chapter Header Banner
       checkPageBreak(50);
@@ -631,7 +595,7 @@ export async function generateStudyMaterialPdf(
     // ==========================================
     // 📄 FOOTER & PAGE NUMBERS ON ALL PAGES
     // ==========================================
-    const totalPages = doc.internal.getNumberOfPages();
+    const totalPages = doc.getNumberOfPages();
     for (let p = 1; p <= totalPages; p++) {
       doc.setPage(p);
       doc.setDrawColor(226, 232, 240);
@@ -641,11 +605,6 @@ export async function generateStudyMaterialPdf(
       setFont(false);
       doc.setFontSize(8);
       doc.setTextColor(148, 163, 184);
-      doc.text(
-        `Generated by QuizCrack • Competitive Exam Study Series`,
-        marginX,
-        pageHeight - 18
-      );
       doc.text(
         `Page ${p} of ${totalPages}`,
         pageWidth - marginX,
@@ -679,24 +638,26 @@ export async function generateStudyMaterialWord(
   const toastId = toast.loading("Generating Study Material Word (.docx)...");
 
   try {
+    const cleanChapters = filterEducationalChapters(material.chapters);
+    const cleanTitle = cleanDocumentTitle(material.title, cleanChapters[0]?.chapterTitle);
     const docChildren: (Paragraph | Table)[] = [];
 
     // Title
     docChildren.push(
       new Paragraph({
-        text: material.title,
+        text: cleanTitle,
         heading: HeadingLevel.TITLE,
         spacing: { before: 0, after: 120 },
       })
     );
 
-    // Subtitle
-    if (material.subtitle) {
+    // Subtitle (only if valid educational subtitle)
+    if (material.subtitle && !isArtificialSubtitle(material.subtitle)) {
       docChildren.push(
         new Paragraph({
           children: [
             new TextRun({
-              text: `${material.subtitle} • Generated by QuizCrack`,
+              text: material.subtitle,
               italics: true,
               color: "64748b",
             }),
@@ -707,7 +668,7 @@ export async function generateStudyMaterialWord(
     }
 
     // Chapters
-    for (const ch of material.chapters) {
+    for (const ch of cleanChapters) {
       // Chapter Heading (H1)
       docChildren.push(
         new Paragraph({
