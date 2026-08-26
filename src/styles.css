@@ -638,13 +638,15 @@
   }
 }
 
-/* Print styling for Study Material Document */
+/* Print styling for Study Material Document and Exam Paper */
 @media print {
   body * {
     visibility: hidden;
   }
   #study-material-document-content,
-  #study-material-document-content * {
+  #study-material-document-content *,
+  .print-only,
+  .print-only * {
     visibility: visible;
   }
   #study-material-document-content {
@@ -661,7 +663,22 @@
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
-  .pdf-block {
+  .print-only {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 20px !important;
+    box-shadow: none !important;
+    border: none !important;
+    background: white !important;
+    color: black !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  .pdf-block,
+  .print-question-block {
     break-inside: avoid !important;
     page-break-inside: avoid !important;
   }

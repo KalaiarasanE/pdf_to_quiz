@@ -244,6 +244,12 @@ const generateExamPdf = (
 
   const renderPdf = (base64Font?: string) => {
     try {
+      logTamilStage(
+        "F",
+        "Content Passed to Exam PDF Renderer",
+        `Exam: ${pdfName} | Questions: ${questionsList.length} | Q1: ${questionsList[0]?.question}`
+      );
+
       const doc = new jsPDF({
         orientation: "p",
         unit: "pt",
@@ -3560,6 +3566,9 @@ function ConfigureStage({
           }
 
           let batchText = batchPagesText.join("\n\n");
+          logTamilStage("A", `Raw MCQ Extracted Batch Text (Batch ${batchIdx + 1})`, batchText);
+          batchText = cleanUnwantedTamilSymbols(normalizeTamilUnicode(batchText));
+          logTamilStage("B", `Unicode-Normalized MCQ Batch Text (Batch ${batchIdx + 1})`, batchText);
 
           if (batchText.trim().length < 100) {
             addLog(`[Batch ${batchIdx + 1}] Skip: Batch contains no readable text.`);
@@ -3656,10 +3665,23 @@ function ConfigureStage({
                     const parsed = JSON.parse(line);
                     if (parsed.error) throw new Error(parsed.error);
                     if (parsed.question) {
-                      questionsList.push(parsed);
+                      const cleanQ = cleanQuestionText(parsed.question);
+                      const cleanOpts = (parsed.options || []).map((o: string) => cleanOptionText(o));
+                      const cleanAns = cleanOptionText(parsed.correctAnswer || "");
+                      const cleanExp = parsed.explanation
+                        ? cleanUnwantedTamilSymbols(normalizeTamilUnicode(parsed.explanation))
+                        : "";
+                      const sanitizedMcq = {
+                        ...parsed,
+                        question: cleanQ,
+                        options: cleanOpts,
+                        correctAnswer: cleanAns,
+                        explanation: cleanExp,
+                      };
+                      questionsList.push(sanitizedMcq);
                       setLiveQuestions([...questionsList]);
                       addLog(
-                        `[Stream] ✅ Q${questionsList.length}: ${parsed.question.slice(0, 50)}...`,
+                        `[Stream] ✅ Q${questionsList.length}: ${cleanQ.slice(0, 50)}...`,
                       );
                     }
                   } catch (err) {
@@ -3744,6 +3766,12 @@ function ConfigureStage({
       } catch (err) {
         console.warn("Could not write cache to IndexedDB", err);
       }
+
+      logTamilStage(
+        "E",
+        "Final Validated MCQs Set",
+        `Total: ${questionsList.length} | Q1: ${questionsList[0]?.question}`
+      );
 
       updateStep("generate", "done");
       updateStep("complete", "done");

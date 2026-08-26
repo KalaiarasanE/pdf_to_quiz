@@ -3,6 +3,11 @@ import {
   validateAndRefineTamilMCQs,
   isTamilText,
 } from "./tamilllama.server";
+import {
+  cleanUnwantedTamilSymbols,
+  normalizeTamilUnicode,
+  logTamilStage,
+} from "./tamil-pipeline";
 
 export interface StreamConfig {
   text: string;
@@ -198,11 +203,20 @@ ${sourceText}
         parsed.options.length === 4 &&
         typeof parsed.correctAnswer === "string"
       ) {
+        const cleanQ = cleanUnwantedTamilSymbols(normalizeTamilUnicode(parsed.question.trim()));
+        const cleanOpts = parsed.options.map((opt: string) =>
+          cleanUnwantedTamilSymbols(normalizeTamilUnicode((opt || "").trim()))
+        );
+        const cleanAns = cleanUnwantedTamilSymbols(normalizeTamilUnicode(parsed.correctAnswer.trim()));
+        const cleanExp = parsed.explanation
+          ? cleanUnwantedTamilSymbols(normalizeTamilUnicode(parsed.explanation.trim()))
+          : "";
+
         return {
-          question: parsed.question,
-          options: parsed.options,
-          correctAnswer: parsed.correctAnswer,
-          explanation: parsed.explanation || "",
+          question: cleanQ,
+          options: cleanOpts,
+          correctAnswer: cleanAns,
+          explanation: cleanExp,
           difficulty: parsed.difficulty || "Medium",
           category: parsed.category || "Concept",
         };
