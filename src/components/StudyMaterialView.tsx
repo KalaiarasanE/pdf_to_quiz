@@ -186,81 +186,83 @@ export function StudyMaterialView({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="tuneout-glass-tray p-1.5 shadow-xl flex-wrap">
           {/* Edit Mode Toggle */}
-          <Button
-            variant={isEditing ? "default" : "outline"}
-            size="sm"
+          <button
             onClick={() => setIsEditing(!isEditing)}
-            className="gap-1.5 h-10 rounded-full text-xs px-4"
+            className={`tuneout-pill text-xs px-3.5 py-1.5 ${
+              isEditing ? "tuneout-pill-amber" : "text-muted-foreground hover:text-foreground"
+            }`}
           >
             <Edit3 className="h-3.5 w-3.5" />
             <span>{isEditing ? "Done Editing" : "Edit Notes"}</span>
-          </Button>
+            <span className="tuneout-dots" aria-hidden="true">
+              <span className="tuneout-dot" />
+              <span className="tuneout-dot" />
+              <span className="tuneout-dot" />
+            </span>
+          </button>
 
           {/* Copy Button */}
-          <Button
-            variant="outline"
-            size="sm"
+          <button
             onClick={handleCopyAll}
-            className="gap-1.5 h-10 rounded-full text-xs px-3.5"
+            className="tuneout-pill text-xs px-3 py-1.5 text-muted-foreground hover:text-foreground"
             title="Copy Notes to Clipboard"
           >
             <Copy className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Copy</span>
-          </Button>
+          </button>
 
           {/* Download DOCX */}
-          <Button
-            variant="outline"
-            size="sm"
+          <button
             onClick={handleDownloadDocx}
             disabled={downloadingDocx}
-            className="gap-1.5 h-10 rounded-full text-xs px-3.5"
+            className="tuneout-pill text-xs px-3 py-1.5 text-muted-foreground hover:text-foreground"
             title="Download Word (.docx)"
           >
             <FileText className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">DOCX</span>
-          </Button>
+          </button>
 
           {/* Download Study Material PDF (Primary Real Text) */}
-          <Button
+          <button
             onClick={handleDownloadPdf}
             disabled={downloadingPdf}
-            className="bg-primary hover:bg-primary/90 text-white font-bold shadow-[0_0_20px_rgba(26,64,255,0.4)] gap-2 h-10 px-4 rounded-full text-xs md:text-sm"
+            className="tuneout-pill tuneout-pill-blue font-bold text-xs md:text-sm px-4 py-1.5 gap-2 shadow-lg"
             title="Download real selectable text PDF with embedded font"
           >
             <Download className="h-4 w-4" />
             <span>Download PDF</span>
-          </Button>
+            <span className="tuneout-dots ml-1" aria-hidden="true">
+              <span className="tuneout-dot" />
+              <span className="tuneout-dot" />
+              <span className="tuneout-dot" />
+            </span>
+          </button>
 
           {/* Browser Native Print / PDF Preview */}
-          <Button
-            variant="outline"
-            size="sm"
+          <button
             onClick={printStudyMaterialDocument}
-            className="gap-1.5 h-10 rounded-full text-xs px-3.5"
+            className="tuneout-pill text-xs px-3 py-1.5 text-muted-foreground hover:text-foreground"
             title="Open browser print preview (100% styled vector PDF)"
           >
             <Printer className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Print / Browser PDF</span>
-          </Button>
+          </button>
 
           {/* Fullscreen view toggle */}
-          <Button
-            variant="ghost"
-            size="icon"
+          <button
             onClick={() => setFullscreen(!fullscreen)}
-            className="h-10 w-10 rounded-full"
+            className="tuneout-pill p-2 rounded-full text-muted-foreground hover:text-foreground"
             title={fullscreen ? "Exit Fullscreen" : "Fullscreen View"}
           >
             {fullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-          </Button>
+          </button>
         </div>
       </div>
 
       {/* Filter & Chapter Jump Strip */}
-      <div className="flex flex-col sm:flex-row gap-3 items-center justify-between woblo-glass p-3.5 rounded-2xl">
+      <div className="flex flex-col sm:flex-row gap-3 items-center justify-between tuneout-glass-card p-3.5 rounded-2xl">
         <div className="flex items-center gap-2 w-full sm:w-auto flex-1">
           <div className="relative w-full sm:w-72">
             <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
@@ -283,10 +285,10 @@ export function StudyMaterialView({
                 const el = document.getElementById(`chapter-${idx}`);
                 if (el) el.scrollIntoView({ behavior: "smooth" });
               }}
-              className={`h-8 text-xs px-3 shrink-0 rounded-full font-medium transition-all ${
+              className={`tuneout-pill py-1 px-3 text-xs shrink-0 ${
                 activeChapterIndex === idx
-                  ? "bg-primary text-white shadow-[0_0_12px_rgba(26,64,255,0.35)] font-bold"
-                  : "text-muted-foreground hover:text-foreground hover:bg-white/[0.06]"
+                  ? "tuneout-pill-blue"
+                  : "text-muted-foreground hover:text-foreground"
               }`}
             >
               Ch {idx + 1}

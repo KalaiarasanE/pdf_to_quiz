@@ -1736,8 +1736,8 @@ function App() {
             </button>
           </div>
 
-          {/* Desktop Navigation Link Pills */}
-          <div className="hidden lg:flex items-center gap-1.5 mx-auto">
+          {/* Desktop Navigation Link Pills (Reijo "Tune Out" 3D Liquid Glassmorphism) */}
+          <div className="hidden lg:flex items-center gap-1.5 mx-auto tuneout-glass-tray shadow-xl">
             {[
               { id: "generate", label: "MCQ Generator" },
               { id: "study-material", label: "Study Notes" },
@@ -1765,27 +1765,41 @@ function App() {
                       else setStage("upload");
                     }
                   }}
-                  className={`px-3.5 py-1.5 text-xs font-semibold rounded-full transition-all ${
+                  className={`tuneout-pill py-1.5 px-3.5 text-xs ${
                     isActive
-                      ? "bg-primary text-white shadow-[0_0_16px_rgba(26,64,255,0.35)]"
-                      : "text-muted-foreground hover:text-foreground hover:bg-white/[0.04]"
+                      ? nav.id === "study-material"
+                        ? "tuneout-pill-amber"
+                        : "tuneout-pill-blue"
+                      : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
-                  {nav.label}
+                  <span>{nav.label}</span>
+                  {isActive && (
+                    <span className="tuneout-dots ml-1" aria-hidden="true">
+                      <span className="tuneout-dot" />
+                      <span className="tuneout-dot" />
+                      <span className="tuneout-dot" />
+                    </span>
+                  )}
                 </button>
               );
             })}
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
-            {/* Desktop Upload Button */}
-            <Button
+            {/* Desktop Upload Button (Reijo "Tune Out" Amber Liquid Glass Capsule) */}
+            <button
               onClick={() => globalFileInputRef.current?.click()}
-              className="hidden sm:flex bg-primary hover:bg-primary/90 text-white font-semibold shadow-[0_0_20px_rgba(26,64,255,0.35)] hover:-translate-y-0.5 active:translate-y-0 transition gap-1.5 h-9 px-4 rounded-full text-xs"
+              className="hidden sm:inline-flex tuneout-pill tuneout-pill-amber h-9 px-4 text-xs font-bold gap-2 cursor-pointer shadow-lg hover:-translate-y-0.5 active:translate-y-0 transition"
             >
               <PlusCircle className="h-3.5 w-3.5" />
               <span>Upload Document</span>
-            </Button>
+              <span className="tuneout-dots ml-0.5" aria-hidden="true">
+                <span className="tuneout-dot" />
+                <span className="tuneout-dot" />
+                <span className="tuneout-dot" />
+              </span>
+            </button>
 
             {/* Profile / Account Shortcut */}
             <Button
@@ -3167,30 +3181,40 @@ function UploadStage({
             </Button>
           </div>
 
-          {/* Mode Selector Pill */}
+          {/* Reijo "Tune Out" 3D Liquid Glass Mode Selector */}
           {onSelectMode && (
-            <div className="inline-flex items-center gap-1 p-1 bg-secondary/80 rounded-full border border-border/80 text-xs font-semibold backdrop-blur-md">
+            <div className="tuneout-glass-tray p-1.5 shadow-2xl mb-2">
               <button
                 onClick={() => onSelectMode("mcq")}
-                className={`px-4 py-2 rounded-full transition-all flex items-center gap-2 font-bold ${
+                className={`tuneout-pill px-5 py-2.5 text-xs ${
                   mode === "mcq"
-                    ? "bg-primary text-white shadow-[0_0_16px_rgba(26,64,255,0.4)]"
+                    ? "tuneout-pill-blue"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
               >
-                <FileText className="h-3.5 w-3.5" />
-                <span>📝 MCQ Quiz Mode</span>
+                <FileText className="h-4 w-4" />
+                <span className="font-bold">MCQ Quiz Mode</span>
+                <span className="tuneout-dots ml-1" aria-hidden="true">
+                  <span className="tuneout-dot" />
+                  <span className="tuneout-dot" />
+                  <span className="tuneout-dot" />
+                </span>
               </button>
               <button
                 onClick={() => onSelectMode("study-material")}
-                className={`px-4 py-2 rounded-full transition-all flex items-center gap-2 font-bold ${
+                className={`tuneout-pill px-5 py-2.5 text-xs ${
                   mode === "study-material"
-                    ? "bg-primary text-white shadow-[0_0_16px_rgba(26,64,255,0.4)]"
+                    ? "tuneout-pill-amber"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
               >
-                <GraduationCap className="h-3.5 w-3.5" />
-                <span>📚 Full Study Notes Mode</span>
+                <GraduationCap className="h-4 w-4" />
+                <span className="font-bold">Full Study Notes Mode</span>
+                <span className="tuneout-dots ml-1" aria-hidden="true">
+                  <span className="tuneout-dot" />
+                  <span className="tuneout-dot" />
+                  <span className="tuneout-dot" />
+                </span>
               </button>
             </div>
           )}
