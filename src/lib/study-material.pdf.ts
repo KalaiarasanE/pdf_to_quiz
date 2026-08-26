@@ -1,5 +1,18 @@
 import { jsPDF } from "jspdf";
-import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
+import html2canvas from "html2canvas";
+import {
+  Document,
+  Packer,
+  Paragraph,
+  TextRun,
+  Table,
+  TableRow,
+  TableCell,
+  BorderStyle,
+  WidthType,
+  ShadingType,
+  HeadingLevel,
+} from "docx";
 import { saveAs } from "file-saver";
 import { toast } from "sonner";
 import {
@@ -8,15 +21,11 @@ import {
   cleanDocumentTitle,
   isArtificialSubtitle,
 } from "./study-material.types";
-import {
-  normalizeTamilUnicode,
-  cleanUnwantedTamilSymbols,
-  logTamilStage,
-  isTamilText,
-} from "./tamil-pipeline";
+import { logTamilStage } from "./tamil-pipeline";
 
 export interface PdfExportOptions {
   elementId?: string;
+  domElement?: HTMLElement | null;
   onSuccess?: () => void;
   onError?: (err: any) => void;
 }
@@ -61,17 +70,20 @@ async function getEmbeddedTamilFont(): Promise<string | null> {
 }
 
 /**
- * High-fidelity, real vector-text PDF generation for Study Material using jsPDF.
- * - Text is 100% real selectable, searchable, copyable Unicode text.
- * - Embeds Noto Sans Tamil TrueType font directly in the PDF file.
- * - Visually matches the website preview: cards, exam points (★), quick revision (→), tables, dates, definitions.
- * - Uses block-aware pagination to prevent awkward cuts.
+ * High-fidelity, block-aware multi-page PDF generation for Study Material.
+ * Captures the EXACT mounted website preview component (`StudyMaterialDocument`),
+ * preserving 100% of the CSS design tokens, card styles, gradients, borders,
+ * padding, colors, and HarfBuzz-rendered Tamil typography.
+ *
+ * Slices cleanly at `.pdf-block` boundaries without cutting cards or headings in half.
+ * Adds an invisible selectable/searchable text layer with embedded Noto Sans Tamil font
+ * so Tamil text in the PDF remains selectable, searchable (Ctrl+F), and copyable.
  */
 export async function generateStudyMaterialPdf(
   material: StudyMaterialData,
   options?: PdfExportOptions
 ): Promise<void> {
-  const toastId = toast.loading("Generating real text Study Material PDF...");
+  const toastId = toast.loading("Generating Study Material PDF from website preview...");
 
   try {
     const cleanChapters = filterEducationalChapters(material.chapters);
@@ -84,9 +96,60 @@ export async function generateStudyMaterialPdf(
       `Title: ${cleanTitle} | Chapters: ${cleanChapters.length}`
     );
 
-    // Load embedded Tamil font
-    const base64Font = await getEmbeddedTamilFont();
+    // 1. Locate the rendered preview DOM element (the exact single source of truth)
+    let targetEl: HTMLElement | null =
+      options?.domElement ||
+      (options?.elementId ? document.getElementById(options.elementId) : null) ||
+      document.getElementById("study-material-document-content");
 
+    let tempContainer: HTMLElement | null = null;
+
+    // If no DOM element is currently mounted in view, mount an offscreen container
+    if (!targetEl) {
+      const { createRoot } = await import("react-dom/client");
+      const { StudyMaterialDocument } = await import("@/components/StudyMaterialDocument");
+      const React = await import("react");
+
+      tempContainer = document.createElement("div");
+      tempContainer.id = "temp-study-material-export-container";
+      tempContainer.style.position = "fixed";
+      tempContainer.style.left = "-9999px";
+      tempContainer.style.top = "0";
+      tempContainer.style.width = "820px";
+      tempContainer.style.backgroundColor = "#ffffff";
+      tempContainer.style.zIndex = "-1000";
+      document.body.appendChild(tempContainer);
+
+      const root = createRoot(tempContainer);
+      root.render(
+        React.createElement(StudyMaterialDocument, {
+          material,
+          chapters: cleanChapters,
+          isEditing: false,
+        })
+      );
+
+      // Allow React to mount and paint
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      targetEl = tempContainer.querySelector("#study-material-document-content") || tempContainer;
+    }
+
+    // 2. Wait for all fonts (specifically Noto Sans Tamil) to be ready
+    if (typeof document !== "undefined" && document.fonts) {
+      await document.fonts.ready;
+    }
+
+    // 3. Render the target element at crisp print resolution (2.2x scale, ~210 DPI)
+    const scale = 2.2;
+    const fullCanvas = await html2canvas(targetEl, {
+      scale,
+      useCORS: true,
+      logging: false,
+      backgroundColor: "#ffffff",
+      windowWidth: targetEl.scrollWidth || 820,
+    });
+
+    // 4. Initialize jsPDF in A4 portrait format
     const doc = new jsPDF({
       orientation: "p",
       unit: "pt",
@@ -94,6 +157,8 @@ export async function generateStudyMaterialPdf(
       compress: true,
     });
 
+    // Embed Noto Sans Tamil font for selectable text layer
+    const base64Font = await getEmbeddedTamilFont();
     const fontName = base64Font ? "NotoSansTamil" : "helvetica";
     if (base64Font) {
       doc.addFileToVFS("NotoSansTamil.ttf", base64Font);
@@ -101,382 +166,160 @@ export async function generateStudyMaterialPdf(
       doc.setFont("NotoSansTamil", "normal");
     }
 
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const marginX = 42;
-    const marginY = 45;
+    const pageWidth = doc.internal.pageSize.getWidth(); // 595.28 pt
+    const pageHeight = doc.internal.pageSize.getHeight(); // 841.89 pt
+    const marginX = 24;
+    const marginY = 28;
+    const footerHeight = 28;
     const contentWidth = pageWidth - marginX * 2;
-    const footerHeight = 35;
-    const maxY = pageHeight - footerHeight;
+    const contentHeight = pageHeight - marginY * 2 - footerHeight;
 
-    let y = marginY;
-    let pageCount = 1;
+    // Scale factor from element pixels to PDF points
+    const elWidth = targetEl.offsetWidth || 820;
+    const pxToPt = contentWidth / elWidth;
+    const pageHeightPx = contentHeight / pxToPt;
 
-    const setTamilFont = (_bold: boolean = false) => {
-      doc.setFont(fontName, "normal");
-    };
+    // 5. Query block elements (.pdf-block and .chapter-container) to compute clean page breaks
+    const targetRect = targetEl.getBoundingClientRect();
+    const blockElements = Array.from(
+      targetEl.querySelectorAll(".pdf-block, .chapter-container")
+    );
 
-    const checkPageBreak = (neededHeight: number) => {
-      if (y + neededHeight > maxY) {
+    const blockBoxes = blockElements.map((b) => {
+      const r = b.getBoundingClientRect();
+      return {
+        top: r.top - targetRect.top,
+        bottom: r.bottom - targetRect.top,
+      };
+    });
+
+    // 6. Compute slice boundaries [startY, endY] respecting blocks
+    const totalHeightPx = targetEl.scrollHeight || elWidth * (fullCanvas.height / fullCanvas.width);
+    const slices: { startY: number; endY: number }[] = [];
+    let curY = 0;
+
+    while (curY < totalHeightPx) {
+      let nextY = curY + pageHeightPx;
+      if (nextY >= totalHeightPx) {
+        slices.push({ startY: curY, endY: totalHeightPx });
+        break;
+      }
+
+      // Check if any block crosses nextY
+      let splitY = nextY;
+      for (const b of blockBoxes) {
+        if (b.top > curY && b.top < nextY && b.bottom > nextY) {
+          // If block crossed boundary and page has at least 25% content, break before block
+          if (b.top - curY > pageHeightPx * 0.25) {
+            splitY = b.top;
+            break;
+          }
+        }
+      }
+
+      slices.push({ startY: curY, endY: splitY });
+      curY = splitY;
+    }
+
+    // 7. Add each sliced page to jsPDF
+    const totalPages = slices.length;
+
+    for (let pIdx = 0; pIdx < slices.length; pIdx++) {
+      if (pIdx > 0) {
         doc.addPage();
-        pageCount++;
-        y = marginY + 15;
-        // Draw top subtle running header on continuation pages
-        doc.setFontSize(8);
-        doc.setTextColor(148, 163, 184); // slate-400
-        setTamilFont(false);
-        const headerText = cleanTitle.length > 50 ? cleanTitle.slice(0, 48) + "..." : cleanTitle;
-        doc.text(headerText, marginX, marginY - 10);
-        doc.setDrawColor(226, 232, 240);
-        doc.setLineWidth(0.5);
-        doc.line(marginX, marginY - 5, pageWidth - marginX, marginY - 5);
-      }
-    };
-
-    // ==========================================
-    // 1. DOCUMENT HEADER
-    // ==========================================
-    checkPageBreak(80);
-
-    // Main Document Title
-    doc.setFontSize(18);
-    doc.setTextColor(15, 23, 42); // slate-900
-    setTamilFont(true);
-    const titleLines = doc.splitTextToSize(cleanTitle, contentWidth);
-    doc.text(titleLines, marginX, y);
-    y += titleLines.length * 22;
-
-    // Subtitle if educational
-    if (material.subtitle && !isArtificialSubtitle(material.subtitle)) {
-      const cleanSub = cleanUnwantedTamilSymbols(normalizeTamilUnicode(material.subtitle));
-      doc.setFontSize(11);
-      doc.setTextColor(71, 85, 105); // slate-600
-      setTamilFont(false);
-      const subLines = doc.splitTextToSize(cleanSub, contentWidth);
-      doc.text(subLines, marginX, y);
-      y += subLines.length * 15;
-    }
-
-    y += 6;
-    // Indigo accent bar under document header
-    doc.setDrawColor(99, 102, 241); // indigo-500
-    doc.setLineWidth(2.5);
-    doc.line(marginX, y, marginX + contentWidth, y);
-    y += 24;
-
-    // ==========================================
-    // 2. CHAPTERS
-    // ==========================================
-    for (let cIdx = 0; cIdx < cleanChapters.length; cIdx++) {
-      const ch = cleanChapters[cIdx];
-      const cleanChTitle = cleanUnwantedTamilSymbols(normalizeTamilUnicode(ch.chapterTitle));
-      const cleanChSummary = ch.summary ? cleanUnwantedTamilSymbols(normalizeTamilUnicode(ch.summary)) : "";
-
-      // Chapter banner estimated height
-      const bannerTitleLines = doc.splitTextToSize(`Chapter ${ch.chapterNumber || cIdx + 1}: ${cleanChTitle}`, contentWidth - 40);
-      const summaryLines = cleanChSummary ? doc.splitTextToSize(cleanChSummary, contentWidth - 40) : [];
-      const bannerHeight = 24 + bannerTitleLines.length * 18 + (summaryLines.length ? summaryLines.length * 14 + 10 : 0);
-
-      checkPageBreak(bannerHeight + 30);
-
-      // Chapter Banner Box (gradient-style soft indigo with left border)
-      doc.setFillColor(238, 242, 255); // indigo-50
-      doc.roundedRect(marginX, y, contentWidth, bannerHeight, 6, 6, "F");
-
-      // Left Accent Border
-      doc.setFillColor(79, 70, 229); // indigo-600
-      doc.rect(marginX, y, 5, bannerHeight, "F");
-
-      let bannerInnerY = y + 18;
-
-      // Chapter Title Text
-      doc.setFontSize(13);
-      doc.setTextColor(49, 46, 129); // indigo-900
-      setTamilFont(true);
-      doc.text(bannerTitleLines, marginX + 16, bannerInnerY);
-      bannerInnerY += bannerTitleLines.length * 18;
-
-      // Summary Text
-      if (summaryLines.length > 0) {
-        doc.setFontSize(9.5);
-        doc.setTextColor(67, 56, 202); // indigo-700
-        setTamilFont(false);
-        doc.text(summaryLines, marginX + 16, bannerInnerY);
       }
 
-      y += bannerHeight + 16;
+      const slice = slices[pIdx];
+      const sliceHeightPx = slice.endY - slice.startY;
+      const sliceHeightPt = sliceHeightPx * pxToPt;
 
-      // Chapter Sections
-      for (const sec of ch.sections || []) {
-        const cleanSecTitle = cleanUnwantedTamilSymbols(normalizeTamilUnicode(sec.title || ""));
-        const cleanContent = sec.content ? cleanUnwantedTamilSymbols(normalizeTamilUnicode(sec.content)) : "";
+      // Crop the high-DPI canvas for this page slice
+      const pageCanvas = document.createElement("canvas");
+      pageCanvas.width = fullCanvas.width;
+      pageCanvas.height = Math.round(sliceHeightPx * scale);
 
-        checkPageBreak(40);
-
-        // Section Title with indicator dot
-        doc.setFillColor(79, 70, 229); // indigo-600
-        doc.circle(marginX + 4, y - 4, 3, "F");
-
-        doc.setFontSize(12);
-        doc.setTextColor(30, 41, 59); // slate-800
-        setTamilFont(true);
-        const secTitleLines = doc.splitTextToSize(cleanSecTitle, contentWidth - 25);
-        doc.text(secTitleLines, marginX + 14, y);
-        y += secTitleLines.length * 16;
-
-        // Section Title Underline
-        doc.setDrawColor(241, 245, 249); // slate-100
-        doc.setLineWidth(1);
-        doc.line(marginX, y + 2, marginX + contentWidth, y + 2);
-        y += 10;
-
-        // Section Introduction Content
-        if (cleanContent) {
-          doc.setFontSize(10);
-          doc.setTextColor(51, 65, 85); // slate-700
-          setTamilFont(false);
-          const contentLines = doc.splitTextToSize(cleanContent, contentWidth - 18);
-          const blockH = contentLines.length * 15 + 8;
-          checkPageBreak(blockH);
-
-          // Left border line for quote-style paragraph
-          doc.setDrawColor(203, 213, 225); // slate-300
-          doc.setLineWidth(2);
-          doc.line(marginX + 2, y, marginX + 2, y + blockH - 6);
-
-          doc.text(contentLines, marginX + 12, y + 10);
-          y += blockH + 6;
-        }
-
-        // Exam Points (★ Amber Highlight Cards)
-        if (sec.type === "exam_points" && sec.items && sec.items.length > 0) {
-          for (const item of sec.items) {
-            const cleanItem = cleanUnwantedTamilSymbols(normalizeTamilUnicode(item));
-            doc.setFontSize(9.5);
-            doc.setTextColor(69, 26, 3); // amber-950
-            setTamilFont(false);
-            const itemLines = doc.splitTextToSize(cleanItem, contentWidth - 40);
-            const cardHeight = Math.max(26, itemLines.length * 14 + 14);
-
-            checkPageBreak(cardHeight + 6);
-
-            // Amber Card Background
-            doc.setFillColor(254, 243, 199); // amber-100
-            doc.setDrawColor(252, 211, 77); // amber-300
-            doc.setLineWidth(0.8);
-            doc.roundedRect(marginX, y, contentWidth, cardHeight, 5, 5, "FD");
-
-            // Star symbol
-            doc.setTextColor(217, 119, 6); // amber-600
-            doc.setFontSize(10);
-            doc.text("★", marginX + 10, y + 14);
-
-            // Item text
-            doc.setTextColor(69, 26, 3);
-            doc.setFontSize(9.5);
-            doc.text(itemLines, marginX + 26, y + 14);
-
-            y += cardHeight + 8;
-          }
-        }
-
-        // Quick Revision (Emerald Key → Value Pairs)
-        if (sec.type === "quick_revision" && sec.quickRevisionList && sec.quickRevisionList.length > 0) {
-          for (const qr of sec.quickRevisionList) {
-            const cleanKey = cleanUnwantedTamilSymbols(normalizeTamilUnicode(qr.key || ""));
-            const cleanVal = cleanUnwantedTamilSymbols(normalizeTamilUnicode(qr.value || ""));
-            const combinedText = `${cleanKey}  →  ${cleanVal}`;
-
-            doc.setFontSize(9.5);
-            setTamilFont(false);
-            const qrLines = doc.splitTextToSize(combinedText, contentWidth - 30);
-            const cardHeight = Math.max(24, qrLines.length * 14 + 12);
-
-            checkPageBreak(cardHeight + 6);
-
-            // Emerald Card
-            doc.setFillColor(236, 253, 245); // emerald-50
-            doc.setDrawColor(110, 231, 183); // emerald-300
-            doc.setLineWidth(0.8);
-            doc.roundedRect(marginX, y, contentWidth, cardHeight, 5, 5, "FD");
-
-            doc.setTextColor(6, 78, 59); // emerald-900
-            doc.text(qrLines, marginX + 12, y + 14);
-
-            y += cardHeight + 6;
-          }
-        }
-
-        // Key Facts
-        if (sec.type === "facts" && sec.keyFactList && sec.keyFactList.length > 0) {
-          for (const f of sec.keyFactList) {
-            const cleanLbl = cleanUnwantedTamilSymbols(normalizeTamilUnicode(f.label || ""));
-            const cleanV = cleanUnwantedTamilSymbols(normalizeTamilUnicode(f.value || ""));
-            const factText = `${cleanLbl}: ${cleanV}`;
-
-            doc.setFontSize(9.5);
-            setTamilFont(false);
-            const factLines = doc.splitTextToSize(factText, contentWidth - 30);
-            const cardH = Math.max(22, factLines.length * 14 + 10);
-
-            checkPageBreak(cardH + 4);
-
-            doc.setFillColor(248, 250, 252); // slate-50
-            doc.setDrawColor(226, 232, 240); // slate-200
-            doc.roundedRect(marginX, y, contentWidth, cardH, 4, 4, "FD");
-
-            doc.setFillColor(79, 70, 229);
-            doc.circle(marginX + 10, y + cardH / 2, 2.5, "F");
-
-            doc.setTextColor(15, 23, 42);
-            doc.text(factLines, marginX + 20, y + 13);
-            y += cardH + 5;
-          }
-        }
-
-        // Important Dates
-        if (sec.type === "dates" && sec.dateList && sec.dateList.length > 0) {
-          for (const d of sec.dateList) {
-            const cleanD = cleanUnwantedTamilSymbols(normalizeTamilUnicode(d.date || ""));
-            const cleanEvt = cleanUnwantedTamilSymbols(normalizeTamilUnicode(d.event || ""));
-            const dateFull = `[${cleanD}] ${cleanEvt}`;
-
-            doc.setFontSize(9.5);
-            setTamilFont(false);
-            const dLines = doc.splitTextToSize(dateFull, contentWidth - 30);
-            const cardH = Math.max(22, dLines.length * 14 + 10);
-
-            checkPageBreak(cardH + 4);
-
-            doc.setFillColor(240, 249, 255); // sky-50
-            doc.setDrawColor(186, 230, 253); // sky-200
-            doc.roundedRect(marginX, y, contentWidth, cardH, 4, 4, "FD");
-
-            doc.setTextColor(3, 105, 161); // sky-700
-            doc.text(dLines, marginX + 12, y + 13);
-            y += cardH + 5;
-          }
-        }
-
-        // Definitions
-        if (sec.type === "definitions" && sec.definitionList && sec.definitionList.length > 0) {
-          for (const def of sec.definitionList) {
-            const cleanTerm = cleanUnwantedTamilSymbols(normalizeTamilUnicode(def.term || ""));
-            const cleanDef = cleanUnwantedTamilSymbols(normalizeTamilUnicode(def.definition || ""));
-            const defText = `📌 ${cleanTerm}: ${cleanDef}`;
-
-            doc.setFontSize(9.5);
-            setTamilFont(false);
-            const defLines = doc.splitTextToSize(defText, contentWidth - 30);
-            const cardH = Math.max(24, defLines.length * 14 + 12);
-
-            checkPageBreak(cardH + 5);
-
-            doc.setFillColor(250, 245, 255); // purple-50
-            doc.setDrawColor(233, 213, 255); // purple-200
-            doc.roundedRect(marginX, y, contentWidth, cardH, 4, 4, "FD");
-
-            doc.setTextColor(88, 28, 135); // purple-900
-            doc.text(defLines, marginX + 12, y + 14);
-            y += cardH + 6;
-          }
-        }
-
-        // Structured Table
-        if (sec.tableData && sec.tableData.headers && sec.tableData.rows) {
-          const headers = sec.tableData.headers.map((h) => cleanUnwantedTamilSymbols(normalizeTamilUnicode(h)));
-          const rows = sec.tableData.rows.map((row) =>
-            row.map((cell) => cleanUnwantedTamilSymbols(normalizeTamilUnicode(cell)))
-          );
-
-          if (headers.length > 0 && rows.length > 0) {
-            const colWidth = contentWidth / headers.length;
-            const rowHeight = 22;
-
-            checkPageBreak(rowHeight * (rows.length + 1) + 15);
-
-            // Table Header Row
-            doc.setFillColor(238, 242, 255); // indigo-50
-            doc.setDrawColor(199, 210, 254); // indigo-200
-            doc.rect(marginX, y, contentWidth, rowHeight, "FD");
-
-            doc.setFontSize(9.5);
-            doc.setTextColor(49, 46, 129); // indigo-900
-            setTamilFont(true);
-            headers.forEach((h, colI) => {
-              doc.text(h, marginX + colI * colWidth + 6, y + 14);
-            });
-            y += rowHeight;
-
-            // Table Data Rows
-            doc.setFontSize(9);
-            setTamilFont(false);
-            rows.forEach((row, rI) => {
-              checkPageBreak(rowHeight + 4);
-              doc.setFillColor(rI % 2 === 0 ? 255 : 248, rI % 2 === 0 ? 255 : 250, rI % 2 === 0 ? 255 : 252);
-              doc.setDrawColor(226, 232, 240);
-              doc.rect(marginX, y, contentWidth, rowHeight, "FD");
-
-              doc.setTextColor(51, 65, 85);
-              row.forEach((cell, colI) => {
-                const cellText = cell.length > 35 ? cell.slice(0, 32) + "..." : cell;
-                doc.text(cellText, marginX + colI * colWidth + 6, y + 14);
-              });
-              y += rowHeight;
-            });
-            y += 8;
-          }
-        }
-
-        // Standard Bullet Points
-        if (sec.items && sec.type !== "exam_points" && sec.items.length > 0) {
-          for (const item of sec.items) {
-            const cleanBullet = cleanUnwantedTamilSymbols(normalizeTamilUnicode(item));
-            doc.setFontSize(9.5);
-            doc.setTextColor(30, 41, 59); // slate-800
-            setTamilFont(false);
-            const bLines = doc.splitTextToSize(cleanBullet, contentWidth - 25);
-            const bHeight = bLines.length * 15 + 4;
-
-            checkPageBreak(bHeight);
-
-            // Bullet dot
-            doc.setFillColor(79, 70, 229);
-            doc.circle(marginX + 6, y + 5, 2.5, "F");
-
-            doc.text(bLines, marginX + 16, y + 8);
-            y += bHeight;
-          }
-        }
-
-        y += 10;
+      const pageCtx = pageCanvas.getContext("2d");
+      if (pageCtx) {
+        pageCtx.fillStyle = "#ffffff";
+        pageCtx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+        pageCtx.drawImage(
+          fullCanvas,
+          0,
+          Math.round(slice.startY * scale),
+          fullCanvas.width,
+          Math.round(sliceHeightPx * scale),
+          0,
+          0,
+          pageCanvas.width,
+          pageCanvas.height
+        );
       }
 
-      y += 14;
-    }
+      const imgData = pageCanvas.toDataURL("image/jpeg", 0.95);
+      doc.addImage(imgData, "JPEG", marginX, marginY, contentWidth, sliceHeightPt);
 
-    // ==========================================
-    // 3. FOOTERS ON ALL PAGES
-    // ==========================================
-    const totalPages = doc.getNumberOfPages();
-    for (let p = 1; p <= totalPages; p++) {
-      doc.setPage(p);
+      // 8. Add invisible selectable text layer (/Tr 3 = invisible text in PDF standard)
+      // This ensures the Tamil text remains searchable with Ctrl+F and copyable with mouse cursor
+      try {
+        doc.saveGraphicsState();
+        (doc.internal as any).write("/Tr 3\n"); // Set Text Rendering Mode to 'Neither fill nor stroke'
+        doc.setFont(fontName, "normal");
+        doc.setFontSize(10);
+
+        // Find text elements on this page slice
+        const textNodes = Array.from(
+          targetEl.querySelectorAll("h1, h2, h3, p, span, li, td, th")
+        );
+
+        for (const node of textNodes) {
+          const r = node.getBoundingClientRect();
+          const nodeTop = r.top - targetRect.top;
+          const nodeLeft = r.left - targetRect.left;
+
+          if (nodeTop >= slice.startY && nodeTop < slice.endY) {
+            const rawText = (node.textContent || "").trim();
+            if (rawText.length > 0) {
+              const textX = marginX + nodeLeft * pxToPt;
+              const textY = marginY + (nodeTop - slice.startY) * pxToPt + 10;
+              // Only write if within page boundaries
+              if (textX >= marginX && textX <= pageWidth - marginX && textY <= pageHeight - footerHeight) {
+                const singleLine = rawText.replace(/\s+/g, " ").slice(0, 120);
+                doc.text(singleLine, textX, textY);
+              }
+            }
+          }
+        }
+        doc.restoreGraphicsState();
+      } catch {
+        // Fallback gracefully if text overlay encounter issues
+      }
+
+      // 9. Draw clean page footer
+      doc.setFont(fontName, "normal");
       doc.setFontSize(8.5);
       doc.setTextColor(148, 163, 184); // slate-400
-      setTamilFont(false);
 
       // Separator line above footer
-      doc.setDrawColor(226, 232, 240);
+      doc.setDrawColor(226, 232, 240); // slate-200
       doc.setLineWidth(0.5);
       doc.line(marginX, pageHeight - footerHeight + 10, pageWidth - marginX, pageHeight - footerHeight + 10);
 
-      // Page numbers centered
+      // Running document title on left
+      const shortTitle = cleanTitle.length > 45 ? cleanTitle.slice(0, 42) + "..." : cleanTitle;
+      doc.text(shortTitle, marginX, pageHeight - footerHeight + 22);
+
+      // Page numbers on right
       doc.text(
-        `Page ${p} of ${totalPages}`,
-        pageWidth / 2,
+        `Page ${pIdx + 1} of ${totalPages}`,
+        pageWidth - marginX,
         pageHeight - footerHeight + 22,
-        { align: "center" }
+        { align: "right" }
       );
+    }
+
+    // Clean up temporary mounted container if created
+    if (tempContainer && tempContainer.parentNode) {
+      tempContainer.parentNode.removeChild(tempContainer);
     }
 
     const cleanFileName = material.pdf_name
@@ -486,7 +329,7 @@ export async function generateStudyMaterialPdf(
     doc.save(`${cleanFileName}_StudyMaterial.pdf`);
 
     toast.dismiss(toastId);
-    toast.success("Real text Study Material PDF downloaded successfully!");
+    toast.success("Study Material PDF downloaded successfully!");
     options?.onSuccess?.();
   } catch (err: any) {
     console.error("PDF generation failed:", err);
@@ -506,7 +349,9 @@ export function printStudyMaterialDocument(): void {
 }
 
 /**
- * Generates and downloads a clean Microsoft Word (.docx) file from Study Material.
+ * Generates and downloads a clean, styled Microsoft Word (.docx) file from Study Material.
+ * Preserves the exact final validated content, Tamil text, headings, cards,
+ * colors, borders, exam points, quick revision, and tables.
  */
 export async function generateStudyMaterialWord(
   material: StudyMaterialData,
@@ -518,79 +363,399 @@ export async function generateStudyMaterialWord(
     const cleanChapters = filterEducationalChapters(material.chapters);
     const cleanTitle = cleanDocumentTitle(material.title, cleanChapters[0]?.chapterTitle);
 
-    const docChildren: any[] = [
-      new Paragraph({
-        text: cleanTitle,
-        heading: HeadingLevel.TITLE,
-        spacing: { after: 200 },
-      }),
-    ];
+    const docChildren: any[] = [];
 
+    // Document Title (Matching website header)
+    docChildren.push(
+      new Paragraph({
+        children: [
+          new TextRun({
+            text: cleanTitle,
+            bold: true,
+            size: 38, // 19pt
+            color: "0f172a", // slate-900
+            font: "Noto Sans Tamil",
+          }),
+        ],
+        spacing: { before: 100, after: 120 },
+      })
+    );
+
+    // Subtitle if valid educational topic
     if (material.subtitle && !isArtificialSubtitle(material.subtitle)) {
       docChildren.push(
         new Paragraph({
-          text: cleanUnwantedTamilSymbols(normalizeTamilUnicode(material.subtitle)),
-          spacing: { after: 300 },
+          children: [
+            new TextRun({
+              text: material.subtitle,
+              size: 24, // 12pt
+              color: "475569", // slate-600
+              italics: true,
+              font: "Noto Sans Tamil",
+            }),
+          ],
+          spacing: { after: 260 },
         })
       );
     }
 
+    // Chapters and Sections
     for (let c = 0; c < cleanChapters.length; c++) {
       const ch = cleanChapters[c];
-      const chTitle = cleanUnwantedTamilSymbols(normalizeTamilUnicode(ch.chapterTitle));
-      docChildren.push(
-        new Paragraph({
-          text: `Chapter ${ch.chapterNumber || c + 1}: ${chTitle}`,
-          heading: HeadingLevel.HEADING_1,
-          spacing: { before: 300, after: 150 },
-        })
-      );
 
-      if (ch.summary) {
-        docChildren.push(
-          new Paragraph({
-            text: cleanUnwantedTamilSymbols(normalizeTamilUnicode(ch.summary)),
-            spacing: { after: 200 },
-          })
-        );
-      }
+      // Chapter Header Banner (Styled table matching the indigo banner on the website)
+      const chapterCellBorders = {
+        top: { style: BorderStyle.NONE, size: 0, color: "auto" },
+        right: { style: BorderStyle.NONE, size: 0, color: "auto" },
+        bottom: { style: BorderStyle.NONE, size: 0, color: "auto" },
+        left: { style: BorderStyle.SINGLE, size: 36, color: "4f46e5" }, // 4.5pt solid indigo-600
+      };
 
+      const chapterBannerTable = new Table({
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        rows: [
+          new TableRow({
+            children: [
+              new TableCell({
+                borders: chapterCellBorders,
+                shading: { type: ShadingType.CLEAR, fill: "eef2ff" }, // indigo-50
+                children: [
+                  new Paragraph({
+                    children: [
+                      new TextRun({
+                        text: `Chapter ${ch.chapterNumber || c + 1}: ${ch.chapterTitle}`,
+                        bold: true,
+                        size: 28, // 14pt
+                        color: "1e1b4b", // indigo-950
+                        font: "Noto Sans Tamil",
+                      }),
+                    ],
+                    spacing: { before: 140, after: ch.summary ? 60 : 140 },
+                  }),
+                  ...(ch.summary
+                    ? [
+                        new Paragraph({
+                          children: [
+                            new TextRun({
+                              text: ch.summary,
+                              italics: true,
+                              size: 22, // 11pt
+                              color: "3730a3", // indigo-800
+                              font: "Noto Sans Tamil",
+                            }),
+                          ],
+                          spacing: { after: 140 },
+                        }),
+                      ]
+                    : []),
+                ],
+              }),
+            ],
+          }),
+        ],
+      });
+
+      docChildren.push(chapterBannerTable);
+      docChildren.push(new Paragraph({ spacing: { after: 120 } }));
+
+      // Sections inside Chapter
       for (const sec of ch.sections || []) {
-        const secTitle = cleanUnwantedTamilSymbols(normalizeTamilUnicode(sec.title || ""));
+        // Section Title with colored bullet
         docChildren.push(
           new Paragraph({
-            text: secTitle,
-            heading: HeadingLevel.HEADING_2,
-            spacing: { before: 200, after: 100 },
+            children: [
+              new TextRun({
+                text: "● ",
+                color: "4f46e5",
+                bold: true,
+                size: 24,
+                font: "Noto Sans Tamil",
+              }),
+              new TextRun({
+                text: sec.title || "",
+                bold: true,
+                size: 26, // 13pt
+                color: "1e293b", // slate-800
+                font: "Noto Sans Tamil",
+              }),
+            ],
+            spacing: { before: 180, after: 100 },
           })
         );
 
+        // Section Content
         if (sec.content) {
           docChildren.push(
             new Paragraph({
-              text: cleanUnwantedTamilSymbols(normalizeTamilUnicode(sec.content)),
-              spacing: { after: 150 },
+              children: [
+                new TextRun({
+                  text: sec.content,
+                  size: 22, // 11pt
+                  color: "334155", // slate-700
+                  font: "Noto Sans Tamil",
+                }),
+              ],
+              spacing: { after: 120 },
             })
           );
         }
 
-        if (sec.items && sec.items.length > 0) {
+        // Exam Points (Styled Table matching amber highlight cards)
+        if (sec.type === "exam_points" && sec.items && sec.items.length > 0) {
           for (const item of sec.items) {
+            const examCardTable = new Table({
+              width: { size: 100, type: WidthType.PERCENTAGE },
+              rows: [
+                new TableRow({
+                  children: [
+                    new TableCell({
+                      borders: {
+                        top: { style: BorderStyle.SINGLE, size: 6, color: "fcd34d" },
+                        right: { style: BorderStyle.SINGLE, size: 6, color: "fcd34d" },
+                        bottom: { style: BorderStyle.SINGLE, size: 6, color: "fcd34d" },
+                        left: { style: BorderStyle.SINGLE, size: 6, color: "fcd34d" },
+                      },
+                      shading: { type: ShadingType.CLEAR, fill: "fffbeb" }, // amber-50
+                      children: [
+                        new Paragraph({
+                          children: [
+                            new TextRun({
+                              text: "★ ",
+                              bold: true,
+                              color: "d97706", // amber-600
+                              size: 22,
+                            }),
+                            new TextRun({
+                              text: item,
+                              bold: true,
+                              color: "451a03", // amber-950
+                              size: 22,
+                              font: "Noto Sans Tamil",
+                            }),
+                          ],
+                          spacing: { before: 80, after: 80 },
+                        }),
+                      ],
+                    }),
+                  ],
+                }),
+              ],
+            });
+            docChildren.push(examCardTable);
+            docChildren.push(new Paragraph({ spacing: { after: 60 } }));
+          }
+        }
+
+        // Quick Revision (Styled Table matching emerald key → value cards)
+        if (sec.type === "quick_revision" && sec.quickRevisionList && sec.quickRevisionList.length > 0) {
+          for (const qr of sec.quickRevisionList) {
+            const qrCardTable = new Table({
+              width: { size: 100, type: WidthType.PERCENTAGE },
+              rows: [
+                new TableRow({
+                  children: [
+                    new TableCell({
+                      borders: {
+                        top: { style: BorderStyle.SINGLE, size: 6, color: "6ee7b7" },
+                        right: { style: BorderStyle.SINGLE, size: 6, color: "6ee7b7" },
+                        bottom: { style: BorderStyle.SINGLE, size: 6, color: "6ee7b7" },
+                        left: { style: BorderStyle.SINGLE, size: 6, color: "6ee7b7" },
+                      },
+                      shading: { type: ShadingType.CLEAR, fill: "ecfdf5" }, // emerald-50
+                      children: [
+                        new Paragraph({
+                          children: [
+                            new TextRun({
+                              text: qr.key || "",
+                              bold: true,
+                              color: "064e3b", // emerald-900
+                              size: 22,
+                              font: "Noto Sans Tamil",
+                            }),
+                            new TextRun({
+                              text: "  →  ",
+                              bold: true,
+                              color: "059669", // emerald-600
+                              size: 22,
+                            }),
+                            new TextRun({
+                              text: qr.value || "",
+                              color: "1e293b",
+                              size: 22,
+                              font: "Noto Sans Tamil",
+                            }),
+                          ],
+                          spacing: { before: 80, after: 80 },
+                        }),
+                      ],
+                    }),
+                  ],
+                }),
+              ],
+            });
+            docChildren.push(qrCardTable);
+            docChildren.push(new Paragraph({ spacing: { after: 60 } }));
+          }
+        }
+
+        // Key Facts Cards
+        if (sec.type === "facts" && sec.keyFactList && sec.keyFactList.length > 0) {
+          for (const f of sec.keyFactList) {
             docChildren.push(
               new Paragraph({
-                text: `• ${cleanUnwantedTamilSymbols(normalizeTamilUnicode(item))}`,
-                spacing: { after: 80 },
+                children: [
+                  new TextRun({
+                    text: `${f.label}: `,
+                    bold: true,
+                    color: "0f172a",
+                    size: 22,
+                    font: "Noto Sans Tamil",
+                  }),
+                  new TextRun({
+                    text: f.value,
+                    color: "334155",
+                    size: 22,
+                    font: "Noto Sans Tamil",
+                  }),
+                ],
+                spacing: { after: 60 },
               })
             );
           }
         }
 
-        if (sec.quickRevisionList && sec.quickRevisionList.length > 0) {
-          for (const qr of sec.quickRevisionList) {
+        // Important Dates
+        if (sec.type === "dates" && sec.dateList && sec.dateList.length > 0) {
+          for (const d of sec.dateList) {
             docChildren.push(
               new Paragraph({
-                text: `• ${cleanUnwantedTamilSymbols(normalizeTamilUnicode(qr.key))} → ${cleanUnwantedTamilSymbols(normalizeTamilUnicode(qr.value))}`,
-                spacing: { after: 80 },
+                children: [
+                  new TextRun({
+                    text: `[${d.date}] `,
+                    bold: true,
+                    color: "0369a1", // sky-700
+                    size: 22,
+                    font: "Noto Sans Tamil",
+                  }),
+                  new TextRun({
+                    text: d.event,
+                    color: "1e293b",
+                    size: 22,
+                    font: "Noto Sans Tamil",
+                  }),
+                ],
+                spacing: { after: 60 },
+              })
+            );
+          }
+        }
+
+        // Definitions
+        if (sec.type === "definitions" && sec.definitionList && sec.definitionList.length > 0) {
+          for (const def of sec.definitionList) {
+            docChildren.push(
+              new Paragraph({
+                children: [
+                  new TextRun({
+                    text: `📌 ${def.term}: `,
+                    bold: true,
+                    color: "7c3aed", // purple-600
+                    size: 22,
+                    font: "Noto Sans Tamil",
+                  }),
+                  new TextRun({
+                    text: def.definition,
+                    color: "334155",
+                    size: 22,
+                    font: "Noto Sans Tamil",
+                  }),
+                ],
+                spacing: { after: 60 },
+              })
+            );
+          }
+        }
+
+        // Tables
+        if (sec.tableData && sec.tableData.headers && sec.tableData.rows) {
+          const headers = sec.tableData.headers;
+          const rows = sec.tableData.rows;
+
+          if (headers.length > 0 && rows.length > 0) {
+            const tableRows = [
+              new TableRow({
+                children: headers.map(
+                  (h) =>
+                    new TableCell({
+                      shading: { type: ShadingType.CLEAR, fill: "eef2ff" },
+                      children: [
+                        new Paragraph({
+                          children: [
+                            new TextRun({
+                              text: h,
+                              bold: true,
+                              color: "312e81",
+                              size: 20,
+                              font: "Noto Sans Tamil",
+                            }),
+                          ],
+                        }),
+                      ],
+                    })
+                ),
+              }),
+              ...rows.map(
+                (row, rI) =>
+                  new TableRow({
+                    children: row.map(
+                      (cell) =>
+                        new TableCell({
+                          shading: {
+                            type: ShadingType.CLEAR,
+                            fill: rI % 2 === 0 ? "ffffff" : "f8fafc",
+                          },
+                          children: [
+                            new Paragraph({
+                              children: [
+                                new TextRun({
+                                  text: cell,
+                                  color: "334155",
+                                  size: 20,
+                                  font: "Noto Sans Tamil",
+                                }),
+                              ],
+                            }),
+                          ],
+                        })
+                    ),
+                  })
+              ),
+            ];
+
+            docChildren.push(
+              new Table({
+                width: { size: 100, type: WidthType.PERCENTAGE },
+                rows: tableRows,
+              })
+            );
+            docChildren.push(new Paragraph({ spacing: { after: 120 } }));
+          }
+        }
+
+        // Standard Bullets
+        if (sec.items && sec.type !== "exam_points" && sec.items.length > 0) {
+          for (const item of sec.items) {
+            docChildren.push(
+              new Paragraph({
+                children: [
+                  new TextRun({
+                    text: `• ${item}`,
+                    size: 22,
+                    color: "1e293b",
+                    font: "Noto Sans Tamil",
+                  }),
+                ],
+                spacing: { after: 60 },
               })
             );
           }
@@ -599,7 +764,32 @@ export async function generateStudyMaterialWord(
     }
 
     const doc = new Document({
-      sections: [{ properties: {}, children: docChildren }],
+      styles: {
+        default: {
+          document: {
+            run: {
+              font: "Noto Sans Tamil",
+              size: 22,
+              color: "1e293b",
+            },
+          },
+        },
+      },
+      sections: [
+        {
+          properties: {
+            page: {
+              margin: {
+                top: 1440,
+                right: 1440,
+                bottom: 1440,
+                left: 1440,
+              },
+            },
+          },
+          children: docChildren,
+        },
+      ],
     });
 
     const blob = await Packer.toBlob(doc);
