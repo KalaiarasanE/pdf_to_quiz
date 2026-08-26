@@ -70,6 +70,80 @@ async function getEmbeddedTamilFont(): Promise<string | null> {
 }
 
 /**
+ * Mathematical conversion from OKLCH color space to standard sRGB.
+ * Guarantees crisp, exact color parity with website preview while
+ * completely preventing html2canvas from throwing "unsupported color function oklch".
+ */
+export function oklchToRgb(l: number, c: number, h: number): [number, number, number] {
+  const hRad = (h * Math.PI) / 180;
+  const a = c * Math.cos(hRad);
+  const b = c * Math.sin(hRad);
+
+  const l_ = l + 0.3963377774 * a + 0.2158037573 * b;
+  const m_ = l - 0.1055613458 * a - 0.0638541728 * b;
+  const s_ = l - 0.0894841775 * a - 1.2914855480 * b;
+
+  const l3 = l_ * l_ * l_;
+  const m3 = m_ * m_ * m_;
+  const s3 = s_ * s_ * s_;
+
+  const r = +4.0767434770 * l3 - 3.3077115913 * m3 + 0.2309699292 * s3;
+  const g = -1.2684380046 * l3 + 2.6097574011 * m3 - 0.3413193965 * s3;
+  const bl = -0.0041960863 * l3 - 0.7034186147 * m3 + 1.7076147010 * s3;
+
+  const gamma = (x: number) =>
+    x <= 0.0031308 ? 12.92 * x : 1.055 * Math.pow(Math.max(0, x), 1 / 2.4) - 0.055;
+
+  return [
+    Math.min(255, Math.max(0, Math.round(gamma(r) * 255))),
+    Math.min(255, Math.max(0, Math.round(gamma(g) * 255))),
+    Math.min(255, Math.max(0, Math.round(gamma(bl) * 255))),
+  ];
+}
+
+/**
+ * Replaces any oklch(...) or modern color functions in CSS with standard rgb/rgba.
+ */
+export function sanitizeCssColors(css: string): string {
+  if (!css || typeof css !== "string") return css;
+
+  // 1. Convert standard oklch(L C H [/ A])
+  let sanitized = css.replace(
+    /oklch\(\s*([\d.]+%?)\s+([\d.]+%?)\s+([\d.]+(?:deg)?)(?:\s*\/\s*([\d.]+%?))?\s*\)/gi,
+    (_match, lStr, cStr, hStr, aStr) => {
+      let l = parseFloat(lStr);
+      if (lStr.endsWith("%")) l /= 100;
+      let c = parseFloat(cStr);
+      if (cStr.endsWith("%")) c /= 100;
+      let h = parseFloat(hStr);
+      if (isNaN(h)) h = 0;
+
+      let alpha = 1;
+      if (aStr) {
+        alpha = parseFloat(aStr);
+        if (aStr.endsWith("%")) alpha /= 100;
+      }
+
+      const [r, g, b] = oklchToRgb(l, c, h);
+      return alpha < 1
+        ? `rgba(${r}, ${g}, ${b}, ${alpha})`
+        : `rgb(${r}, ${g}, ${b})`;
+    }
+  );
+
+  // 2. Convert light-dark(val1, val2) -> val1
+  sanitized = sanitized.replace(/light-dark\(\s*([^,]+?)\s*,\s*[^)]+?\)/gi, "$1");
+
+  // 3. Fallback: Catch any non-standard or complex oklch expressions
+  sanitized = sanitized.replace(/oklch\([^)]+\)/gi, "#1e293b");
+
+  // 4. Catch color(display-p3 ...) or color(srgb ...)
+  sanitized = sanitized.replace(/color\([^)]+\)/gi, "#1e293b");
+
+  return sanitized;
+}
+
+/**
  * High-fidelity, block-aware multi-page PDF generation for Study Material.
  * Captures the EXACT mounted website preview component (`StudyMaterialDocument`),
  * preserving 100% of the CSS design tokens, card styles, gradients, borders,
@@ -147,6 +221,60 @@ export async function generateStudyMaterialPdf(
       logging: false,
       backgroundColor: "#ffffff",
       windowWidth: targetEl.scrollWidth || 820,
+      onclone: (clonedDoc) => {
+        // 1. Gather all CSS rules from same-origin document.styleSheets
+        let combinedCss = "";
+        try {
+          if (typeof document !== "undefined") {
+            for (let i = 0; i < document.styleSheets.length; i++) {
+              const sheet = document.styleSheets[i];
+              try {
+                const rules = sheet.cssRules || sheet.rules;
+                if (rules) {
+                  for (let j = 0; j < rules.length; j++) {
+                    combinedCss += rules[j].cssText + "\n";
+                  }
+                }
+              } catch {
+                // Ignore cross-origin sheet errors (e.g. Google fonts)
+              }
+            }
+          }
+        } catch {}
+
+        // 2. Remove all external <link rel="stylesheet"> that are NOT external web fonts
+        // This prevents html2canvas from downloading external CSS files containing oklch over the network
+        clonedDoc.querySelectorAll("link[rel='stylesheet']").forEach((link) => {
+          const href = link.getAttribute("href") || "";
+          if (!href.includes("fonts.googleapis.com") && !href.includes("font") && !href.includes("cdn")) {
+            link.remove();
+          }
+        });
+
+        // 3. Sanitize all existing <style> tags in cloned document
+        clonedDoc.querySelectorAll("style").forEach((styleEl) => {
+          if (styleEl.textContent && styleEl.textContent.includes("oklch")) {
+            styleEl.textContent = sanitizeCssColors(styleEl.textContent);
+          }
+        });
+
+        // 4. Inject the sanitized combined CSS into cloned document head
+        if (combinedCss) {
+          const sanitizedStyle = clonedDoc.createElement("style");
+          sanitizedStyle.id = "injected-sanitized-css";
+          sanitizedStyle.textContent = sanitizeCssColors(combinedCss);
+          clonedDoc.head.appendChild(sanitizedStyle);
+        }
+
+        // 5. Walk all elements in the cloned document and fix any inline oklch styles
+        const allElements = clonedDoc.querySelectorAll<HTMLElement>("*");
+        allElements.forEach((el) => {
+          const styleAttr = el.getAttribute("style");
+          if (styleAttr && styleAttr.includes("oklch")) {
+            el.setAttribute("style", sanitizeCssColors(styleAttr));
+          }
+        });
+      },
     });
 
     // 4. Initialize jsPDF in A4 portrait format

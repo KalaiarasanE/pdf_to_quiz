@@ -64,8 +64,6 @@ import { StudyMaterialData } from "@/lib/study-material.types";
 import { StudyMaterialView } from "@/components/StudyMaterialView";
 import { StudyMaterialConfigureStage } from "@/components/StudyMaterialConfigureStage";
 import { generateStudyMaterialPdf, generateStudyMaterialWord } from "@/lib/study-material.pdf";
-
-import html2canvas from "html2canvas";
 import Strands from "@/components/Strands";
 import {
   reconstructPdfText,
