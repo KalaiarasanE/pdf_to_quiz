@@ -71,12 +71,19 @@ export async function* generateStudyMaterialStream(
 
   if (pageList && pageList.length > 0) {
     const totalPagesCount = pageList.length;
-    // Step size based on document length to ensure deep, exhaustive notes
+    // Dynamic step calculation to ensure 6-12 high-yield comprehensive units without hitting serverless timeouts
     let step = 1;
-    if (totalPagesCount > 40) step = 4;
-    else if (totalPagesCount > 18) step = 3;
-    else if (totalPagesCount > 6) step = 2;
-    else step = 1; // 1 page per chunk for short documents (<=6 pages) for maximum detail
+    if (totalPagesCount > 150) {
+      step = Math.ceil(totalPagesCount / 12); // e.g. 282 pages -> 24 pages per chapter (12 chapters)
+    } else if (totalPagesCount > 60) {
+      step = Math.ceil(totalPagesCount / 10); // e.g. 100 pages -> 10 pages per chapter (10 chapters)
+    } else if (totalPagesCount > 25) {
+      step = Math.ceil(totalPagesCount / 8);  // e.g. 50 pages -> 7 pages per chapter (8 chapters)
+    } else if (totalPagesCount > 10) {
+      step = 2;                              // e.g. 16 pages -> 2 pages per chapter (8 chapters)
+    } else {
+      step = 1;                              // <= 10 pages -> 1 page per chapter
+    }
 
     let chunkIdx = 0;
     for (let p = 0; p < totalPagesCount; p += step) {
@@ -103,9 +110,10 @@ export async function* generateStudyMaterialStream(
       }
     }
   } else {
-    // Break cleaned raw text by page markers or paragraph blocks (~3500 chars per chunk)
+    // Break cleaned raw text by page markers or paragraph blocks (~5000-15000 chars per chunk)
     const cleanedFullText = cleanPdfExtractedText(text);
-    const MAX_CHUNK_CHARS = 4000;
+    const TARGET_CHUNKS = 10;
+    const MAX_CHUNK_CHARS = Math.max(5000, Math.ceil(cleanedFullText.length / TARGET_CHUNKS));
     const pageDelimiters = cleanedFullText.split(/(?:--- Page \d+ ---|\n\s*---\s*\n|\f)/i);
 
     if (pageDelimiters.length > 1) {
@@ -201,8 +209,8 @@ export async function* generateStudyMaterialStream(
   let globalDocTitle = pdfName.replace(/\.(pdf|docx?)$/i, "").replace(/[_-]/g, " ");
   const completedChaptersMap = new Map<number, StudyMaterialChapter>();
 
-  // Process chunks sequentially or in parallel batches with maximum depth
-  const concurrency = Math.min(3, chunks.length);
+  // Process chunks in parallel batches with maximum depth
+  const concurrency = Math.min(4, chunks.length);
   let nextChunkIdx = 0;
 
   async function processChunk(chunk: PageChunk): Promise<{ chapter: StudyMaterialChapter; docTitle?: string }> {
@@ -542,22 +550,32 @@ async function callAiModel({
 
     const sendRequest = async (m: string) => {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${key}`;
-      return await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [
-            {
-              role: "user",
-              parts: [{ text: `${systemPrompt}\n\n${prompt}` }],
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 20000);
+      try {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [
+              {
+                role: "user",
+                parts: [{ text: `${systemPrompt}\n\n${prompt}` }],
+              },
+            ],
+            generationConfig: {
+              temperature: 0.2,
+              responseMimeType: "application/json",
             },
-          ],
-          generationConfig: {
-            temperature: 0.2,
-            responseMimeType: "application/json",
-          },
-        }),
-      });
+          }),
+          signal: ctrl.signal,
+        });
+        clearTimeout(timer);
+        return response;
+      } catch (err) {
+        clearTimeout(timer);
+        throw err;
+      }
     };
 
     let res = await sendRequest(model);
@@ -579,30 +597,39 @@ async function callAiModel({
     const model = modelName || "gpt-4o-mini";
     const url = "https://api.openai.com/v1/chat/completions";
 
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${key}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: prompt },
-        ],
-        temperature: 0.2,
-        response_format: { type: "json_object" },
-      }),
-    });
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 20000);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${key}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: prompt },
+          ],
+          temperature: 0.2,
+          response_format: { type: "json_object" },
+        }),
+        signal: ctrl.signal,
+      });
+      clearTimeout(timer);
 
-    if (!res.ok) {
-      const errText = await res.text().catch(() => "");
-      throw new Error(`OpenAI API error (${res.status}): ${errText}`);
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+        throw new Error(`OpenAI API error (${res.status}): ${errText}`);
+      }
+
+      const data = await res.json();
+      return data.choices?.[0]?.message?.content || "";
+    } catch (err) {
+      clearTimeout(timer);
+      throw err;
     }
-
-    const data = await res.json();
-    return data.choices?.[0]?.message?.content || "";
   } else {
     // Lovable gateway
     const key = serverLovableKey;

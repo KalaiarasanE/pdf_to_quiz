@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import {
+  StudyMaterialChapter,
   StudyMaterialData,
   StudyMaterialStreamProgress,
 } from "@/lib/study-material.types";
@@ -234,6 +235,7 @@ export function StudyMaterialConfigureStage({
       const decoder = new TextDecoder();
       let buffer = "";
       let finalMaterial: StudyMaterialData | null = null;
+      let latestCompletedChapters: StudyMaterialChapter[] = [];
 
       console.log("[8] Response parsing started");
       while (true) {
@@ -257,7 +259,15 @@ export function StudyMaterialConfigureStage({
 
           if (!update) continue;
 
+          if (Array.isArray(update.completedChapters) && update.completedChapters.length > 0) {
+            latestCompletedChapters = update.completedChapters;
+          }
+
           if (update.error) {
+            if (latestCompletedChapters.length > 0) {
+              console.warn("Stream reported error but partial chapters exist:", update.error);
+              break;
+            }
             clearInterval(timerInterval);
             throw new Error(update.error);
           }
@@ -286,6 +296,50 @@ export function StudyMaterialConfigureStage({
             updateStep("complete", "done");
           }
         }
+      }
+
+      // Check residual buffer in case last chunk had no trailing newline
+      if (buffer.trim() && !finalMaterial) {
+        try {
+          const lastUpdate = JSON.parse(buffer.trim());
+          if (lastUpdate?.studyMaterial) {
+            finalMaterial = lastUpdate.studyMaterial;
+          } else if (Array.isArray(lastUpdate?.completedChapters) && lastUpdate.completedChapters.length > 0) {
+            latestCompletedChapters = lastUpdate.completedChapters;
+          }
+        } catch {}
+      }
+
+      // Automatic synthesis from completed chapters if finalMaterial was omitted or cut off
+      if (!finalMaterial && latestCompletedChapters.length > 0) {
+        let totalPts = 0;
+        for (const ch of latestCompletedChapters) {
+          for (const sec of ch.sections) {
+            if (sec.items) totalPts += sec.items.length;
+            if (sec.keyFactList) totalPts += sec.keyFactList.length;
+            if (sec.dateList) totalPts += sec.dateList.length;
+            if (sec.peopleList) totalPts += sec.peopleList.length;
+            if (sec.definitionList) totalPts += sec.definitionList.length;
+            if (sec.quickRevisionList) totalPts += sec.quickRevisionList.length;
+            if (sec.tableData) totalPts += sec.tableData.rows.length;
+          }
+        }
+
+        finalMaterial = {
+          id: Math.random().toString(36).substring(2, 9),
+          pdf_name: pdf.name,
+          title: pdf.name.replace(/\.(pdf|docx?)$/i, "").replace(/[_-]/g, " "),
+          language: selectedLanguage || detectedLanguage || "Auto",
+          totalPages: pdf.pages,
+          created_at: new Date().toISOString(),
+          chapters: latestCompletedChapters,
+          total_points: totalPts,
+          estimated_read_time_minutes: Math.max(2, Math.round(totalPts * 0.35)),
+        };
+
+        updateStep("finalize", "done");
+        updateStep("complete", "done");
+        console.log("[9] Study material synthesized from completed chapters:", finalMaterial.chapters.length);
       }
 
       clearInterval(timerInterval);
