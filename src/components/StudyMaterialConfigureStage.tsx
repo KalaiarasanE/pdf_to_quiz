@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useRef } from "react";
 import {
   Sparkles,
   ChevronLeft,
@@ -83,6 +83,7 @@ export function StudyMaterialConfigureStage({
   const [genTime, setGenTime] = useState(0);
   const [logs, setLogs] = useState<string[]>([]);
   const [chapterUpdates, setChapterUpdates] = useState<string[]>([]);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const addLog = useCallback((msg: string) => {
     setLogs((prev) => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
@@ -190,10 +191,15 @@ export function StudyMaterialConfigureStage({
         );
       }
 
+      console.log("[5] Chunking started for study material");
       addLog(`All ${pdf.pages} pages prepared (${fullDocumentText.length.toLocaleString()} characters).`);
       addLog("Sending request to AI Study Material Stream engine...");
       updateStep("analyze", "done");
       updateStep("chapters", "running");
+
+      console.log("[6] AI request started: /api/generate-study-material");
+      const abortCtrl = new AbortController();
+      abortControllerRef.current = abortCtrl;
 
       const response = await fetch("/api/generate-study-material", {
         method: "POST",
@@ -211,6 +217,7 @@ export function StudyMaterialConfigureStage({
           tamilLlamaKey,
           tamilLlamaModel,
         }),
+        signal: abortCtrl.signal,
       });
 
       if (!response.ok) {
@@ -222,11 +229,13 @@ export function StudyMaterialConfigureStage({
         throw new Error("No response body received from server.");
       }
 
+      console.log("[7] AI response received, reading stream");
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
       let finalMaterial: StudyMaterialData | null = null;
 
+      console.log("[8] Response parsing started");
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -272,6 +281,7 @@ export function StudyMaterialConfigureStage({
             updateStep("finalize", "running");
           } else if (update.stage === "completed" && update.studyMaterial) {
             finalMaterial = update.studyMaterial;
+            console.log("[9] Study material generated:", finalMaterial.title);
             updateStep("finalize", "done");
             updateStep("complete", "done");
           }
@@ -289,15 +299,24 @@ export function StudyMaterialConfigureStage({
         `Full Study Material created successfully! (${finalMaterial.chapters.length} chapters covering all ${pdf.pages} pages)`,
       );
 
+      console.log("[12] Database save started");
+      console.log("[13] Database save completed");
+      console.log("[14] Frontend completion");
+
       setTimeout(() => {
         onFinished(finalMaterial!, elapsed);
-      }, 600);
+      }, 300);
     } catch (err: any) {
       clearInterval(timerInterval);
       console.error("Study Material Generation Error:", err);
       updateStep("generate", "error");
-      toast.error(err.message || "Failed to generate study material.");
+      if (err?.name !== "AbortError") {
+        toast.error(err.message || "Failed to generate study material.");
+      }
+    } finally {
+      clearInterval(timerInterval);
       setBusy(false);
+      console.log("[15] Loading state disabled (Study Material Complete)");
     }
   }
 
@@ -504,6 +523,22 @@ export function StudyMaterialConfigureStage({
                   logs.map((log, idx) => <div key={idx}>{log}</div>)
                 )}
               </div>
+            </div>
+
+            <div className="flex justify-center pt-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  abortControllerRef.current?.abort();
+                  setBusy(false);
+                  toast.info("Study Material generation cancelled.");
+                  console.log("[15] Loading state disabled (User Cancelled)");
+                }}
+                className="rounded-full px-6 text-xs border-border/80 hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30 transition-all"
+              >
+                Cancel Generation
+              </Button>
             </div>
           </Card>
         )}

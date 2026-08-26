@@ -9,8 +9,18 @@ export interface DetectResult {
 
 export async function detectLanguage(text: string, env: any): Promise<DetectResult> {
   // 1. First, check standard Tamil Unicode presence. If standard Tamil Unicode is already present,
-  // it is definitively Unicode Tamil and NOT a legacy font!
+  // it is definitively Unicode Tamil and NOT a legacy font! Instant return in 0ms.
   const hasTamilUnicode = /[\u0B80-\u0BFF]/.test(text);
+  if (hasTamilUnicode) {
+    const hasEnglish = /[a-zA-Z]{5,}/.test(text);
+    return {
+      isMultilingual: hasEnglish,
+      primaryLanguage: "Tamil",
+      languages: hasEnglish ? ["Tamil", "English"] : ["Tamil"],
+      fontEncoding: "Unicode",
+      hasLegacyTamil: false,
+    };
+  }
 
   // 2. Run local regex validation for legacy Tamil fonts ONLY if no standard Tamil Unicode is present
   const words = text.split(/\s+/);
@@ -26,7 +36,6 @@ export async function detectLanguage(text: string, env: any): Promise<DetectResu
   const hasLegacyTamil = !hasTamilUnicode && legacyPercentage > 8;
 
   if (hasLegacyTamil) {
-    // If it contains more than 5% legacy Tamil patterns, we know it's legacy Tamil!
     let fontEncoding: DetectResult["fontEncoding"] = "other-legacy";
 
     // Simple heuristics for specific legacy fonts
@@ -46,23 +55,13 @@ export async function detectLanguage(text: string, env: any): Promise<DetectResu
   }
 
   // 3. Otherwise, check primary language
-
   const apiKey =
     (env && typeof env === "object" && (env as any).GEMINI_API_KEY) || process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    // Default fallback if no key is configured
-    if (hasTamilUnicode) {
-      return {
-        isMultilingual: false,
-        primaryLanguage: "Tamil",
-        languages: ["Tamil"],
-        fontEncoding: "Unicode",
-        hasLegacyTamil: false,
-      };
-    }
+    const hasLatin = /[a-zA-Z]{5,}/.test(text);
     return {
       isMultilingual: false,
-      primaryLanguage: "English",
+      primaryLanguage: hasLatin ? "English" : "English",
       languages: ["English"],
       fontEncoding: "None",
       hasLegacyTamil: false,
@@ -88,12 +87,17 @@ Return ONLY a valid JSON object matching the schema below. Do not wrap the JSON 
     },
   };
 
+  const detectCtrl = new AbortController();
+  const detectTimer = setTimeout(() => detectCtrl.abort(), 3000);
+
   try {
     const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      signal: detectCtrl.signal,
     });
+    clearTimeout(detectTimer);
 
     if (!response.ok) {
       throw new Error(`API error: ${response.status}`);
@@ -153,11 +157,16 @@ Return ONLY a valid JSON object matching the schema below. Do not wrap the JSON 
 async function fetchWithRetry(
   url: string,
   options: RequestInit,
-  retries = 3,
-  delay = 1500,
+  retries = 2,
+  delay = 1000,
 ): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+
   try {
-    const res = await fetch(url, options);
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(timer);
+
     if ((res.status === 429 || res.status >= 500) && retries > 0) {
       const retryAfter = res.headers.get("retry-after");
       const waitTime = retryAfter ? parseInt(retryAfter, 10) * 1000 : delay;
@@ -169,9 +178,10 @@ async function fetchWithRetry(
     }
     return res;
   } catch (err) {
+    clearTimeout(timer);
     if (retries > 0) {
       console.warn(
-        `Fetch connection error: ${err}. Retrying in ${delay}ms... (${retries} retries left)`,
+        `Fetch connection error or timeout: ${err}. Retrying in ${delay}ms... (${retries} retries left)`,
       );
       await new Promise((resolve) => setTimeout(resolve, delay));
       return fetchWithRetry(url, options, retries - 1, delay * 2);

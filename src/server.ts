@@ -70,6 +70,12 @@ export default {
       if (url.pathname === "/api/convert-legacy-tamil" && request.method === "POST") {
         try {
           const { text } = await request.json();
+          if (!text || typeof text !== "string" || /[\u0B80-\u0BFF]/.test(text)) {
+            // Already standard Tamil Unicode or empty; return immediately
+            return new Response(JSON.stringify({ text: text || "" }), {
+              headers: { "Content-Type": "application/json" },
+            });
+          }
           const { convertLegacyTamil } = await import("./lib/language.server");
           const unicodeText = await convertLegacyTamil(text, env);
           return new Response(JSON.stringify({ text: unicodeText }), {

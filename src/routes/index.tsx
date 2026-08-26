@@ -862,7 +862,7 @@ function App() {
   const [apiProvider, setApiProvider] = useState<"gemini" | "openai" | "lovable">("gemini");
   const [modelName, setModelName] = useState<string>("gemini-3.1-flash-lite");
   const [selectedLanguage, setSelectedLanguage] = useState<string>("");
-  const [tamilLlamaUrl, setTamilLlamaUrl] = useState<string>("http://localhost:11434/v1");
+  const [tamilLlamaUrl, setTamilLlamaUrl] = useState<string>("");
   const [tamilLlamaModel, setTamilLlamaModel] = useState<string>("tamilllama:3.0");
   const [tamilLlamaKey, setTamilLlamaKey] = useState<string>("");
 
@@ -882,6 +882,7 @@ function App() {
   const [globalUploadProgress, setGlobalUploadProgress] = useState(0);
   const [globalUploadStage, setGlobalUploadStage] = useState("");
   const globalFileInputRef = useRef<HTMLInputElement>(null);
+  const uploadAbortControllerRef = useRef<AbortController | null>(null);
 
   // Safe local storage helpers for SSR and restricted browser contexts
   const safeGetItem = useCallback((key: string): string | null => {
@@ -1328,6 +1329,10 @@ function App() {
       return;
     }
 
+    console.log("[1] PDF uploaded:", file.name, `(${file.size} bytes)`);
+    uploadAbortControllerRef.current = new AbortController();
+    const abortSignal = uploadAbortControllerRef.current.signal;
+
     setGlobalUploading(true);
     setGlobalUploadProgress(10);
     setGlobalUploadStage("Checking local cache...");
@@ -1335,7 +1340,14 @@ function App() {
     try {
       const fileType = isPdf ? "pdf" : isDoc ? "doc" : "docx";
       const cacheKey = `pdf_cache_${file.name}_${file.size}_${file.lastModified}`;
-      const cached = await PDFCache.get(cacheKey);
+      
+      let cached: any = null;
+      try {
+        cached = await PDFCache.get(cacheKey);
+      } catch (cErr) {
+        console.warn("Cache lookup warning:", cErr);
+      }
+
       if (cached) {
         toast.success("Loaded document text from local cache!");
         setGlobalUploadProgress(100);
@@ -1344,6 +1356,7 @@ function App() {
           setPdf(cached);
           setCurrentFile(file);
           setGlobalUploading(false);
+          console.log("[15] Loading state disabled (Cached)");
           if (targetCreationMode === "study-material" || activeTab === "study-material") {
             setActiveTab("study-material");
             setStage("study-material-configuring");
@@ -1351,15 +1364,17 @@ function App() {
             setActiveTab("generate");
             setStage("configuring");
           }
-        }, 300);
+        }, 200);
         return;
       }
 
-      setGlobalUploadProgress(30);
+      setGlobalUploadProgress(25);
       let sampleText = "";
       let pagesCount = 1;
       let isScanned = false;
       let extractedPageList: { pageNum: number; text: string }[] = [];
+
+      console.log("[2] PDF text extraction started");
 
       if (isPdf) {
         setGlobalUploadStage("Reading PDF structure...");
@@ -1372,14 +1387,15 @@ function App() {
 
         setGlobalUploadStage(`Extracting text from all ${pagesCount} pages...`);
         extractedPageList = await getPDFPagesTextFast(doc, (current, total) => {
-          setGlobalUploadProgress(30 + Math.round((current / total) * 35));
+          if (abortSignal.aborted) throw new Error("Upload cancelled by user");
+          setGlobalUploadProgress(25 + Math.round((current / total) * 45));
         });
 
         sampleText = extractedPageList.map((p) => p.text).join("\n\n");
         isScanned = sampleText.trim().length < (pagesCount * 30);
       } else {
         setGlobalUploadStage("Reading Word document structure...");
-        setGlobalUploadProgress(40);
+        setGlobalUploadProgress(35);
         const docxData = await extractDocxText(file);
         sampleText = docxData.sampleText;
         pagesCount = docxData.pagesCount;
@@ -1387,8 +1403,13 @@ function App() {
         extractedPageList = docxData.pageList;
       }
 
-      setGlobalUploadStage("Detecting language...");
-      setGlobalUploadProgress(70);
+      console.log(`[3] PDF text extraction completed (${pagesCount} pages)`);
+      console.log(`[4] Text length: ${sampleText.length} characters`);
+
+      if (abortSignal.aborted) throw new Error("Upload cancelled by user");
+
+      setGlobalUploadStage("Analyzing document language...");
+      setGlobalUploadProgress(75);
       let isMultilingual = false;
       let primaryLanguage = "English";
       let languages: string[] = ["English"];
@@ -1396,48 +1417,71 @@ function App() {
       let fontEncoding = "None";
       let cleanSample = sampleText;
 
-      try {
-        const detectRes = await fetch("/api/detect-language", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: sampleText.slice(0, 3000) }),
-        });
-        if (detectRes.ok) {
-          const data = await detectRes.json();
-          isMultilingual = !!data.isMultilingual;
-          primaryLanguage = data.primaryLanguage || "English";
-          languages = data.languages || ["English"];
-          hasLegacyTamil = !!data.hasLegacyTamil;
-          fontEncoding = data.fontEncoding || "None";
+      const hasUnicodeTamil =
+        /[\u0B80-\u0BFF]/.test(sampleText) ||
+        extractedPageList.some((p) => /[\u0B80-\u0BFF]/.test(p.text));
+
+      if (hasUnicodeTamil) {
+        primaryLanguage = "Tamil";
+        languages = ["Tamil"];
+        fontEncoding = "Unicode";
+        hasLegacyTamil = false;
+      } else {
+        try {
+          const detectCtrl = new AbortController();
+          const detectTimer = setTimeout(() => detectCtrl.abort(), 3500);
+
+          const detectRes = await fetch("/api/detect-language", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: sampleText.slice(0, 2000) }),
+            signal: detectCtrl.signal,
+          });
+          clearTimeout(detectTimer);
+
+          if (detectRes.ok) {
+            const data = await detectRes.json();
+            isMultilingual = !!data.isMultilingual;
+            primaryLanguage = data.primaryLanguage || "English";
+            languages = data.languages || ["English"];
+            hasLegacyTamil = !!data.hasLegacyTamil;
+            fontEncoding = data.fontEncoding || "None";
+          }
+        } catch (err) {
+          console.warn("Language detection timed out or failed, using local heuristics:", err);
         }
-      } catch (err) {
-        console.error("Language detection failed", err);
       }
 
-      if (hasLegacyTamil && /[\u0B80-\u0BFF]/.test(sampleText)) {
+      // Re-verify: Any Tamil Unicode definitively disqualifies legacy font conversion
+      if (hasUnicodeTamil || /[\u0B80-\u0BFF]/.test(sampleText)) {
         hasLegacyTamil = false;
         fontEncoding = "Unicode";
+        primaryLanguage = "Tamil";
       }
 
       if (hasLegacyTamil) {
-        setGlobalUploadStage(`Converting Tamil sample...`);
-        setGlobalUploadProgress(90);
+        setGlobalUploadStage("Checking Tamil font...");
+        setGlobalUploadProgress(85);
         try {
+          const convCtrl = new AbortController();
+          const convTimer = setTimeout(() => convCtrl.abort(), 3000);
           const convertRes = await fetch("/api/convert-legacy-tamil", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text: sampleText }),
+            body: JSON.stringify({ text: sampleText.slice(0, 500) }),
+            signal: convCtrl.signal,
           });
+          clearTimeout(convTimer);
           if (convertRes.ok) {
             const data = await convertRes.json();
             if (data.text) {
-              cleanSample = data.text;
+              cleanSample = data.text + "\n" + sampleText.slice(500);
               hasLegacyTamil = false;
               fontEncoding = "Unicode";
             }
           }
         } catch (err) {
-          console.error("Tamil font conversion failed:", err);
+          console.warn("Legacy font check skipped or timed out:", err);
         }
       }
 
@@ -1456,14 +1500,21 @@ function App() {
         fileType,
       };
 
-      await PDFCache.set(cacheKey, meta);
+      try {
+        await PDFCache.set(cacheKey, meta);
+      } catch (cacheErr) {
+        console.warn("PDFCache save failed:", cacheErr);
+      }
 
       setGlobalUploadProgress(100);
       setGlobalUploadStage("Complete!");
+
       setTimeout(() => {
         setPdf(meta);
         setCurrentFile(file);
         setGlobalUploading(false);
+        console.log("[15] Loading state disabled (Upload Complete)");
+
         if (targetCreationMode === "study-material" || activeTab === "study-material") {
           setActiveTab("study-material");
           setStage("study-material-configuring");
@@ -1478,11 +1529,19 @@ function App() {
           totalPages: prev.totalPages + meta.pages,
         }));
         logActivity("upload", `Uploaded "${meta.name}" (${meta.pages} pages)`);
-      }, 300);
-    } catch (e) {
-      console.error(e);
-      toast.error("Failed to parse document file.");
+      }, 200);
+    } catch (e: any) {
+      console.error("Document upload error:", e);
+      if (e?.message !== "Upload cancelled by user") {
+        toast.error("Failed to parse document file.");
+      }
       setGlobalUploading(false);
+      console.log("[15] Loading state disabled (Error)");
+    } finally {
+      // Guaranteed safety net: if anything hangs or crashes, loading is cleared
+      setTimeout(() => {
+        setGlobalUploading(false);
+      }, 500);
     }
   };
 
@@ -1615,6 +1674,20 @@ function App() {
                 <span>{globalUploadProgress}%</span>
               </div>
             </div>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                uploadAbortControllerRef.current?.abort();
+                setGlobalUploading(false);
+                toast.info("Upload cancelled.");
+                console.log("[15] Loading state disabled (User Cancelled)");
+              }}
+              className="text-xs rounded-full px-5 border-border/80 hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30 transition-all"
+            >
+              Cancel Upload
+            </Button>
           </div>
         </div>
       )}
@@ -2853,6 +2926,7 @@ function UploadStage({
         return;
       }
 
+      console.log("[1] PDF uploaded (UploadStage):", file.name, `(${file.size} bytes)`);
       setBusy(true);
       setProgress(10);
       setStageName("Checking local cache...");
@@ -2860,22 +2934,31 @@ function UploadStage({
       try {
         const fileType = isPdf ? "pdf" : isDoc ? "doc" : "docx";
         const cacheKey = `pdf_cache_${file.name}_${file.size}_${file.lastModified}`;
-        const cached = await PDFCache.get(cacheKey);
+        
+        let cached: any = null;
+        try {
+          cached = await PDFCache.get(cacheKey);
+        } catch (cErr) {
+          console.warn("Cache lookup warning:", cErr);
+        }
+
         if (cached) {
           toast.success("Loaded document text from local cache!");
           setProgress(100);
           setStageName("Ready!");
           setTimeout(() => {
             onLoaded(cached, file);
-          }, 300);
+          }, 200);
           return;
         }
 
-        setProgress(30);
+        setProgress(25);
         let sampleText = "";
         let pagesCount = 1;
         let isScanned = false;
         let extractedPageList: { pageNum: number; text: string }[] = [];
+
+        console.log("[2] PDF text extraction started");
 
         if (isPdf) {
           setStageName("Reading PDF document...");
@@ -2888,14 +2971,14 @@ function UploadStage({
 
           setStageName(`Extracting text from all ${pagesCount} pages...`);
           extractedPageList = await getPDFPagesTextFast(doc, (current, total) => {
-            setProgress(30 + Math.round((current / total) * 35));
+            setProgress(25 + Math.round((current / total) * 45));
           });
 
           sampleText = extractedPageList.map((p) => p.text).join("\n\n");
           isScanned = sampleText.trim().length < (pagesCount * 30);
         } else {
           setStageName("Reading Word document structure...");
-          setProgress(40);
+          setProgress(35);
           const docxData = await extractDocxText(file);
           sampleText = docxData.sampleText;
           pagesCount = docxData.pagesCount;
@@ -2903,9 +2986,11 @@ function UploadStage({
           extractedPageList = docxData.pageList;
         }
 
-        // Detect language
-        setStageName("Detecting language...");
-        setProgress(70);
+        console.log(`[3] PDF text extraction completed (${pagesCount} pages)`);
+        console.log(`[4] Text length: ${sampleText.length} characters`);
+
+        setStageName("Analyzing document language...");
+        setProgress(75);
         let isMultilingual = false;
         let primaryLanguage = "English";
         let languages: string[] = ["English"];
@@ -2913,48 +2998,70 @@ function UploadStage({
         let fontEncoding = "None";
         let cleanSample = sampleText;
 
-        try {
-          const detectRes = await fetch("/api/detect-language", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text: sampleText.slice(0, 3000) }),
-          });
-          if (detectRes.ok) {
-            const data = await detectRes.json();
-            isMultilingual = !!data.isMultilingual;
-            primaryLanguage = data.primaryLanguage || "English";
-            languages = data.languages || ["English"];
-            hasLegacyTamil = !!data.hasLegacyTamil;
-            fontEncoding = data.fontEncoding || "None";
+        const hasUnicodeTamil =
+          /[\u0B80-\u0BFF]/.test(sampleText) ||
+          extractedPageList.some((p) => /[\u0B80-\u0BFF]/.test(p.text));
+
+        if (hasUnicodeTamil) {
+          primaryLanguage = "Tamil";
+          languages = ["Tamil"];
+          fontEncoding = "Unicode";
+          hasLegacyTamil = false;
+        } else {
+          try {
+            const detectCtrl = new AbortController();
+            const detectTimer = setTimeout(() => detectCtrl.abort(), 3500);
+
+            const detectRes = await fetch("/api/detect-language", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ text: sampleText.slice(0, 2000) }),
+              signal: detectCtrl.signal,
+            });
+            clearTimeout(detectTimer);
+
+            if (detectRes.ok) {
+              const data = await detectRes.json();
+              isMultilingual = !!data.isMultilingual;
+              primaryLanguage = data.primaryLanguage || "English";
+              languages = data.languages || ["English"];
+              hasLegacyTamil = !!data.hasLegacyTamil;
+              fontEncoding = data.fontEncoding || "None";
+            }
+          } catch (err) {
+            console.warn("Language detection timed out or failed, using local heuristics:", err);
           }
-        } catch (err) {
-          console.error("Language detection failed", err);
         }
 
-        if (hasLegacyTamil && /[\u0B80-\u0BFF]/.test(sampleText)) {
+        if (hasUnicodeTamil || /[\u0B80-\u0BFF]/.test(sampleText)) {
           hasLegacyTamil = false;
           fontEncoding = "Unicode";
+          primaryLanguage = "Tamil";
         }
 
         if (hasLegacyTamil) {
-          setStageName(`Converting Tamil sample...`);
-          setProgress(90);
+          setStageName("Checking Tamil font...");
+          setProgress(85);
           try {
+            const convCtrl = new AbortController();
+            const convTimer = setTimeout(() => convCtrl.abort(), 3000);
             const convertRes = await fetch("/api/convert-legacy-tamil", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ text: sampleText }),
+              body: JSON.stringify({ text: sampleText.slice(0, 500) }),
+              signal: convCtrl.signal,
             });
+            clearTimeout(convTimer);
             if (convertRes.ok) {
               const data = await convertRes.json();
               if (data.text) {
-                cleanSample = data.text;
+                cleanSample = data.text + "\n" + sampleText.slice(500);
                 hasLegacyTamil = false;
                 fontEncoding = "Unicode";
               }
             }
           } catch (err) {
-            console.error("Tamil font conversion failed:", err);
+            console.warn("Legacy font conversion skipped or timed out:", err);
           }
         }
 
@@ -2973,18 +3080,23 @@ function UploadStage({
           fileType,
         };
 
-        await PDFCache.set(cacheKey, meta);
+        try {
+          await PDFCache.set(cacheKey, meta);
+        } catch (cacheErr) {
+          console.warn("PDFCache save failed:", cacheErr);
+        }
 
         setProgress(100);
         setStageName("Complete!");
         setTimeout(() => {
           onLoaded(meta, file);
-        }, 300);
-      } catch (e) {
-        console.error(e);
-        toast.error("Failed to parse document file. The file may be password-protected or corrupt.");
+        }, 200);
+      } catch (e: any) {
+        console.error("Upload error:", e);
+        toast.error("Failed to parse document file.");
       } finally {
         setBusy(false);
+        console.log("[15] Loading state disabled (UploadStage Complete)");
       }
     },
     [onLoaded, onSelectFile],
@@ -3181,6 +3293,20 @@ function UploadStage({
                 <span>{progress}%</span>
               </div>
             </div>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                setBusy(false);
+                toast.info("Upload cancelled.");
+                console.log("[15] Loading state disabled (UploadStage User Cancelled)");
+              }}
+              className="mt-3 text-xs rounded-full px-5 border-border/80 hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30 transition-all"
+            >
+              Cancel
+            </Button>
           </div>
         )}
       </Card>
@@ -3512,6 +3638,7 @@ function ConfigureStage({
       updateStep("generate", "running");
 
       const totalBatches = batches.length;
+      console.log(`[10] MCQ generation started (total ${totalBatches} batches)`);
       addLog(
         `Divided active pages into ${totalBatches} batches. Initializing Parallel Stream Generation Queue...`,
       );
@@ -3734,6 +3861,8 @@ function ConfigureStage({
 
       clearInterval(timerInterval);
 
+      console.log(`[11] MCQ generation completed (${questionsList.length} questions generated)`);
+
       if (questionsList.length === 0) {
         throw new Error(
           "No questions were generated by the AI model. Try verifying your API key or document text.",
@@ -3741,6 +3870,7 @@ function ConfigureStage({
       }
 
       // Save to IndexedDB caches
+      console.log("[12] Database save started");
       addLog("Saving extracted text and questions to IndexedDB Cache...");
       try {
         const fullExtractedText = allPagesList.map((pl) => pl.text).join("\n\n");
@@ -3762,6 +3892,7 @@ function ConfigureStage({
         await PDFCache.set(textCacheKey, finalPdfMeta);
         // Save PDF questions cache
         await PDFCache.set(questionsCacheKey, questionsList);
+        console.log("[13] Database save completed");
         addLog("Cache successfully saved.");
       } catch (err) {
         console.warn("Could not write cache to IndexedDB", err);
@@ -3778,15 +3909,19 @@ function ConfigureStage({
       toast.success(`Success! Generated ${questionsList.length} questions.`);
 
       const totalElapsed = Math.round((Date.now() - startTime) / 1000);
+      console.log("[14] Frontend completion");
       setTimeout(() => {
         onFinished(questionsList, totalElapsed);
-      }, 1000);
+      }, 800);
     } catch (e) {
       clearInterval(timerInterval);
-      console.error(e);
+      console.error("MCQ generation error:", e);
       updateStep("generate", "error");
       toast.error(e instanceof Error ? e.message : "AI generation failed");
+    } finally {
+      clearInterval(timerInterval);
       setBusy(false);
+      console.log("[15] Loading state disabled (MCQ Generation Complete)");
     }
   }
 
