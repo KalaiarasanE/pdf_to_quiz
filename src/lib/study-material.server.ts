@@ -535,25 +535,36 @@ async function callAiModel({
   if (apiProvider === "gemini") {
     const key = apiKey || serverGeminiKey;
     if (!key) throw new Error("Missing Gemini API Key");
-    const model = modelName || "gemini-3.5-flash";
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+    let model = modelName || "gemini-3.1-flash-lite";
+    if (model === "gemini-2.5-flash") {
+      model = "gemini-3.1-flash-lite";
+    }
 
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: `${systemPrompt}\n\n${prompt}` }],
+    const sendRequest = async (m: string) => {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${key}`;
+      return await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: `${systemPrompt}\n\n${prompt}` }],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.2,
+            responseMimeType: "application/json",
           },
-        ],
-        generationConfig: {
-          temperature: 0.2,
-          responseMimeType: "application/json",
-        },
-      }),
-    });
+        }),
+      });
+    };
+
+    let res = await sendRequest(model);
+    if (!res.ok && res.status === 404 && model !== "gemini-3.1-flash-lite") {
+      console.warn(`[Study Material] Model ${model} returned 404, falling back to gemini-3.1-flash-lite...`);
+      res = await sendRequest("gemini-3.1-flash-lite");
+    }
 
     if (!res.ok) {
       const errText = await res.text().catch(() => "");

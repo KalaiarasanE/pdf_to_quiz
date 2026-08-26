@@ -312,14 +312,9 @@ ${sourceText}
                 let nlIdx;
                 while ((nlIdx = textBuffer.indexOf("\n")) !== -1) {
                   const subLine = textBuffer.slice(0, nlIdx).trim();
-                  textBuffer = textBuffer.slice(nlIdx + 1);
                   const mcq = parseLine(subLine);
                   if (mcq) {
-                    if (isTamil) {
-                      collectedRawMcqs.push(mcq);
-                    } else {
-                      yield mcq;
-                    }
+                    yield mcq;
                   }
                 }
               }
@@ -334,38 +329,7 @@ ${sourceText}
     if (finalLine) {
       const mcq = parseLine(finalLine);
       if (mcq) {
-        if (isTamil) {
-          collectedRawMcqs.push(mcq);
-        } else {
-          yield mcq;
-        }
-      }
-    }
-
-    // For Tamil questions, execute the second validation and correction pass via TamilLlama 3.0
-    if (isTamil && collectedRawMcqs.length > 0) {
-      console.log(
-        `[TamilLlama 3.0] Running second validation/correction pass on ${collectedRawMcqs.length} Tamil questions...`,
-      );
-
-      const validationRes = await validateAndRefineTamilMCQs(collectedRawMcqs, sourceText, env, {
-        config: {
-          apiUrl: tamilLlamaUrl,
-          apiKey: tamilLlamaKey,
-          modelName: tamilLlamaModel,
-        },
-        fallbackAiOptions: {
-          apiKey,
-          apiProvider,
-          modelName,
-          serverGeminiKey,
-          serverOpenAIKey,
-        },
-      });
-
-      const validatedList = validationRes.data;
-      for (const vMcq of validatedList) {
-        yield vMcq;
+        yield mcq;
       }
     }
   } finally {

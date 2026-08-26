@@ -238,34 +238,42 @@ export function StudyMaterialConfigureStage({
           buffer = buffer.slice(newlineIdx + 1);
           if (!line) continue;
 
+          let update: StudyMaterialStreamProgress | null = null;
           try {
-            const update: StudyMaterialStreamProgress = JSON.parse(line);
-            if (update.error) throw new Error(update.error);
+            update = JSON.parse(line);
+          } catch {
+            // partial json, wait for more chunks
+            continue;
+          }
 
-            if (update.message) {
-              addLog(update.message);
-            }
+          if (!update) continue;
 
-            if (update.stage === "detecting_chapters") {
-              updateStep("chapters", "done");
-              updateStep("generate", "running");
-            } else if (update.stage === "generating_chapter") {
-              if (update.chapterTitle) {
-                setChapterUpdates((prev) => {
-                  const entry = `✓ ${update.chapterTitle}`;
-                  return prev.includes(entry) ? prev : [...prev, entry];
-                });
-              }
-            } else if (update.stage === "finalizing") {
-              updateStep("generate", "done");
-              updateStep("finalize", "running");
-            } else if (update.stage === "completed" && update.studyMaterial) {
-              finalMaterial = update.studyMaterial;
-              updateStep("finalize", "done");
-              updateStep("complete", "done");
+          if (update.error) {
+            clearInterval(timerInterval);
+            throw new Error(update.error);
+          }
+
+          if (update.message) {
+            addLog(update.message);
+          }
+
+          if (update.stage === "detecting_chapters") {
+            updateStep("chapters", "done");
+            updateStep("generate", "running");
+          } else if (update.stage === "generating_chapter") {
+            if (update.chapterTitle) {
+              setChapterUpdates((prev) => {
+                const entry = `✓ ${update.chapterTitle}`;
+                return prev.includes(entry) ? prev : [...prev, entry];
+              });
             }
-          } catch (e) {
-            // partial json
+          } else if (update.stage === "finalizing") {
+            updateStep("generate", "done");
+            updateStep("finalize", "running");
+          } else if (update.stage === "completed" && update.studyMaterial) {
+            finalMaterial = update.studyMaterial;
+            updateStep("finalize", "done");
+            updateStep("complete", "done");
           }
         }
       }

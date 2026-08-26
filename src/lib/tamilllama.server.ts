@@ -36,7 +36,7 @@ export function getTamilLlamaConfig(config?: TamilLlamaConfig, env?: any): {
     (env && typeof env === "object" && (env as any).TAMILLLAMA_API_URL) ||
     process.env.TAMILLLAMA_API_URL ||
     config?.apiUrl ||
-    "http://localhost:11434/v1";
+    "";
 
   const envApiKey =
     (env && typeof env === "object" && (env as any).TAMILLLAMA_API_KEY) ||
@@ -51,10 +51,10 @@ export function getTamilLlamaConfig(config?: TamilLlamaConfig, env?: any): {
     "tamilllama:3.0";
 
   return {
-    apiUrl: envApiUrl.replace(/\/+$/, ""),
-    apiKey: envApiKey,
-    model: envModel,
-    timeoutMs: config?.timeoutMs || 35000,
+    apiUrl: envApiUrl.trim().replace(/\/+$/, ""),
+    apiKey: envApiKey.trim(),
+    model: envModel.trim(),
+    timeoutMs: config?.timeoutMs || 8000,
   };
 }
 
@@ -228,8 +228,11 @@ export async function callTamilLlama(params: {
         stream: false,
       };
 
+      const isLocal = tConfig.apiUrl.includes("localhost") || tConfig.apiUrl.includes("127.0.0.1");
+      const effectiveTimeout = isLocal ? 2000 : Math.min(tConfig.timeoutMs || 8000, 10000);
+
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), tConfig.timeoutMs);
+      const timeoutId = setTimeout(() => controller.abort(), effectiveTimeout);
 
       console.log(`[TamilLlama 3.0] Calling native endpoint: ${endpointUrl} (model: ${tConfig.model})...`);
       const response = await fetch(endpointUrl, {
@@ -276,25 +279,34 @@ export async function callTamilLlama(params: {
 
   if (fallbackKey) {
     console.log(`[TamilLlama 3.0] Running Tamil validation pass with Gemini...`);
-    const model = fallbackAiOptions?.modelName || "gemini-3.5-flash";
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${fallbackKey}`;
+    let model = fallbackAiOptions?.modelName || "gemini-3.1-flash-lite";
+    if (model === "gemini-2.5-flash") model = "gemini-3.1-flash-lite";
 
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: `${systemPrompt}\n\n${prompt}` }],
+    const sendFallback = async (m: string) => {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${fallbackKey}`;
+      return await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: `${systemPrompt}\n\n${prompt}` }],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.15,
+            responseMimeType: "application/json",
           },
-        ],
-        generationConfig: {
-          temperature: 0.15,
-          responseMimeType: "application/json",
-        },
-      }),
-    });
+        }),
+      });
+    };
+
+    let res = await sendFallback(model);
+    if (!res.ok && res.status === 404 && model !== "gemini-3.1-flash-lite") {
+      console.warn(`[TamilLlama 3.0] Fallback model ${model} returned 404, falling back to gemini-3.1-flash-lite...`);
+      res = await sendFallback("gemini-3.1-flash-lite");
+    }
 
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
@@ -364,13 +376,10 @@ export async function validateAndRefineTamilStudyMaterial(
 
   console.log(`[TamilLlama 3.0] Initiating Tamil Study Material validation pipeline (${material.chapters.length} chapters)...`);
 
-  const refinedChapters: StudyMaterialChapter[] = [];
   let usedTamilLlamaOverall = false;
   const warnings: string[] = [];
 
-  for (let i = 0; i < material.chapters.length; i++) {
-    const ch = material.chapters[i];
-
+  const chapterPromises = material.chapters.map(async (ch) => {
     const validationPrompt = `You are running the second validation/correction pass on this generated Tamil study material chapter.
 Check and correct:
 1. Tamil spelling errors (ண/ன, ல/ள/ழ, ர/ற, ந/ந/ண).
@@ -404,19 +413,20 @@ Return ONLY the corrected chapter JSON matching the exact same structure without
 
       if (parsedChapter && parsedChapter.chapterTitle && Array.isArray(parsedChapter.sections)) {
         const sanitized = sanitizeTamilObject(parsedChapter);
-        refinedChapters.push({
+        return {
           ...sanitized,
           chapterNumber: ch.chapterNumber,
           sourcePages: ch.sourcePages,
-        });
-      } else {
-        refinedChapters.push(sanitizeTamilObject(ch));
+        };
       }
+      return sanitizeTamilObject(ch);
     } catch (err) {
       console.warn(`[TamilLlama 3.0] Chapter ${ch.chapterNumber} validation fallback:`, err);
-      refinedChapters.push(sanitizeTamilObject(ch));
+      return sanitizeTamilObject(ch);
     }
-  }
+  });
+
+  const refinedChapters = await Promise.all(chapterPromises);
 
   // Validate and sanitize document title
   let refinedTitle = material.title;
@@ -429,8 +439,20 @@ Return ONLY the corrected chapter JSON matching the exact same structure without
       env,
       fallbackAiOptions: options?.fallbackAiOptions,
     });
-    if (text && text.trim().length > 0 && text.length < 150) {
-      refinedTitle = text.replace(/^["']|["']$/g, "").trim();
+    if (text && text.trim().length > 0) {
+      let candidate = text.trim();
+      try {
+        const parsed = JSON.parse(extractJson(candidate));
+        if (parsed && typeof parsed.title === "string") {
+          candidate = parsed.title;
+        } else if (parsed && typeof parsed.documentTitle === "string") {
+          candidate = parsed.documentTitle;
+        }
+      } catch {}
+      candidate = candidate.replace(/^["']|["']$/g, "").trim();
+      if (candidate && candidate.length > 2 && candidate.length < 150) {
+        refinedTitle = candidate;
+      }
     }
   } catch {}
 
