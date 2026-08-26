@@ -1,14 +1,66 @@
 import { jsPDF } from "jspdf";
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell, WidthType, BorderStyle, ShadingType } from "docx";
+import html2canvas from "html2canvas";
+import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
 import { saveAs } from "file-saver";
 import { toast } from "sonner";
-import { StudyMaterialData, filterEducationalChapters, cleanDocumentTitle, isArtificialSubtitle } from "./study-material.types";
+import {
+  StudyMaterialData,
+  filterEducationalChapters,
+  cleanDocumentTitle,
+  isArtificialSubtitle,
+} from "./study-material.types";
 
 export interface PdfExportOptions {
+  elementId?: string;
+  domElement?: HTMLElement | null;
   onSuccess?: () => void;
   onError?: (err: any) => void;
 }
 
+// Cached Base64 font data for embedded Noto Sans Tamil
+let cachedTamilFontBase64: string | null = null;
+
+async function getEmbeddedTamilFont(): Promise<string | null> {
+  if (cachedTamilFontBase64) return cachedTamilFontBase64;
+
+  const fontSources = [
+    "/fonts/NotoSansTamil.ttf",
+    "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanstamil/NotoSansTamil%5Bwdth%2Cwght%5D.ttf",
+  ];
+
+  for (const src of fontSources) {
+    try {
+      const res = await fetch(src);
+      if (res.ok) {
+        const arrayBuffer = await res.arrayBuffer();
+        const bytes = new Uint8Array(arrayBuffer);
+        let binary = "";
+        const len = bytes.byteLength;
+        for (let i = 0; i < len; i++) {
+          binary += String.fromCharCode(bytes[i]);
+        }
+        cachedTamilFontBase64 =
+          typeof btoa !== "undefined"
+            ? btoa(binary)
+            : typeof Buffer !== "undefined"
+            ? Buffer.from(binary, "binary").toString("base64")
+            : null;
+        if (cachedTamilFontBase64) {
+          return cachedTamilFontBase64;
+        }
+      }
+    } catch {
+      // try next source
+    }
+  }
+  return null;
+}
+
+/**
+ * High-fidelity, multi-page PDF generation for Study Material.
+ * Uses the EXACT shared design system of the website preview, ensuring 100% visual
+ * consistency across font, spacing, borders, cards, and Tamil Unicode rendering.
+ */
 export async function generateStudyMaterialPdf(
   material: StudyMaterialData,
   options?: PdfExportOptions
@@ -16,103 +68,105 @@ export async function generateStudyMaterialPdf(
   const toastId = toast.loading("Generating Study Material PDF...");
 
   try {
-    // Filter educational chapters and clean document title
     const cleanChapters = filterEducationalChapters(material.chapters);
     const cleanTitle = cleanDocumentTitle(material.title, cleanChapters[0]?.chapterTitle);
 
-    // Gather all text to check for non-Latin Unicode scripts
-    let fullText = cleanTitle + " " + (material.subtitle || "");
-    for (const ch of cleanChapters) {
-      fullText += " " + ch.chapterTitle + " " + (ch.summary || "");
-      for (const sec of ch.sections) {
-        fullText += " " + sec.title + " " + (sec.content || "");
-        if (sec.items) fullText += " " + sec.items.join(" ");
-        if (sec.keyFactList) fullText += " " + sec.keyFactList.map(f => `${f.label} ${f.value}`).join(" ");
-        if (sec.dateList) fullText += " " + sec.dateList.map(d => `${d.date} ${d.event}`).join(" ");
-        if (sec.peopleList) fullText += " " + sec.peopleList.map(p => `${p.name} ${p.role} ${p.contribution}`).join(" ");
-        if (sec.definitionList) fullText += " " + sec.definitionList.map(d => `${d.term} ${d.definition}`).join(" ");
-        if (sec.quickRevisionList) fullText += " " + sec.quickRevisionList.map(q => `${q.key} ${q.value}`).join(" ");
-        if (sec.tableData) {
-          fullText += " " + sec.tableData.headers.join(" ") + " " + sec.tableData.rows.map(r => r.join(" ")).join(" ");
-        }
+    // Locate the rendered preview DOM element
+    let targetEl: HTMLElement | null =
+      options?.domElement ||
+      (options?.elementId ? document.getElementById(options.elementId) : null) ||
+      document.getElementById("study-material-document-content");
+
+    let tempContainer: HTMLElement | null = null;
+
+    // If no DOM element is currently mounted in view, render a temporary styled container
+    if (!targetEl) {
+      tempContainer = document.createElement("div");
+      tempContainer.style.position = "fixed";
+      tempContainer.style.left = "-9999px";
+      tempContainer.style.top = "0";
+      tempContainer.style.width = "820px"; // Standard A4 content container width
+      tempContainer.style.backgroundColor = "#ffffff";
+      tempContainer.style.zIndex = "-1000";
+      tempContainer.innerHTML = buildDocumentHtmlString(material, cleanTitle, cleanChapters);
+      document.body.appendChild(tempContainer);
+      targetEl = tempContainer;
+    }
+
+    // Capture the target DOM element at high DPI using html2canvas
+    const scale = 2.0; // 2x scale for crisp 192 DPI print-grade resolution
+    const canvas = await html2canvas(targetEl, {
+      scale,
+      useCORS: true,
+      allowTaint: true,
+      backgroundColor: "#ffffff",
+      logging: false,
+      windowWidth: 820,
+    });
+
+    if (tempContainer && tempContainer.parentNode) {
+      tempContainer.parentNode.removeChild(tempContainer);
+    }
+
+    // A4 dimensions in PDF points (72 pt per inch)
+    // A4 = 595.28 pt width x 841.89 pt height
+    const pdfPageWidth = 595.28;
+    const pdfPageHeight = 841.89;
+
+    const marginPt = 36; // 0.5 inch margins
+    const headerHeightPt = 32;
+    const footerHeightPt = 32;
+    const usableWidthPt = pdfPageWidth - marginPt * 2;
+    const usableHeightPt = pdfPageHeight - headerHeightPt - footerHeightPt;
+
+    // Convert PDF usable dimensions to canvas pixels
+    const canvasWidth = canvas.width;
+    const canvasHeight = canvas.height;
+    const pxPerPt = canvasWidth / usableWidthPt;
+    const pageSliceHeightPx = usableHeightPt * pxPerPt;
+
+    // Identify intelligent block-aware break points
+    const blockElements = targetEl.querySelectorAll(".pdf-block, .chapter-container");
+    const breakPositionsPx: number[] = [];
+    const rootTop = targetEl.getBoundingClientRect().top;
+
+    blockElements.forEach((el) => {
+      const rect = el.getBoundingClientRect();
+      const relativeTopPx = (rect.top - rootTop) * scale;
+      if (relativeTopPx > 20 && relativeTopPx < canvasHeight - 20) {
+        breakPositionsPx.push(relativeTopPx);
       }
-    }
+    });
 
-    let fontName = "helvetica";
-    let fontFileName = "";
-    let fontUrls: string[] = [];
+    // Calculate slice boundaries
+    const pageSlices: { startY: number; endY: number }[] = [];
+    let currentY = 0;
 
-    if (/[\u0B80-\u0BFF]/.test(fullText)) {
-      fontName = "NotoSansTamil";
-      fontFileName = "NotoSansTamil-Regular.ttf";
-      fontUrls = [
-        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansTamil/NotoSansTamil-Regular.ttf",
-        "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts/main/hinted/ttf/NotoSansTamil/NotoSansTamil-Regular.ttf",
-      ];
-    } else if (/[\u0900-\u097F]/.test(fullText)) {
-      fontName = "NotoSansDevanagari";
-      fontFileName = "NotoSansDevanagari-Regular.ttf";
-      fontUrls = [
-        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Regular.ttf",
-        "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts/main/hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Regular.ttf",
-      ];
-    } else if (/[\u0C00-\u0C7F]/.test(fullText)) {
-      fontName = "NotoSansTelugu";
-      fontFileName = "NotoSansTelugu-Regular.ttf";
-      fontUrls = [
-        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansTelugu/NotoSansTelugu-Regular.ttf",
-        "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts/main/hinted/ttf/NotoSansTelugu/NotoSansTelugu-Regular.ttf",
-      ];
-    } else if (/[\u0C80-\u0CFF]/.test(fullText)) {
-      fontName = "NotoSansKannada";
-      fontFileName = "NotoSansKannada-Regular.ttf";
-      fontUrls = [
-        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansKannada/NotoSansKannada-Regular.ttf",
-        "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts/main/hinted/ttf/NotoSansKannada/NotoSansKannada-Regular.ttf",
-      ];
-    } else if (/[\u0D00-\u0D7F]/.test(fullText)) {
-      fontName = "NotoSansMalayalam";
-      fontFileName = "NotoSansMalayalam-Regular.ttf";
-      fontUrls = [
-        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansMalayalam/NotoSansMalayalam-Regular.ttf",
-        "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts/main/hinted/ttf/NotoSansMalayalam/NotoSansMalayalam-Regular.ttf",
-      ];
-    } else if (Array.from(fullText).some((char) => char.charCodeAt(0) > 127)) {
-      fontName = "NotoSans";
-      fontFileName = "NotoSans-Regular.ttf";
-      fontUrls = [
-        "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSans/NotoSans-Regular.ttf",
-        "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts/main/hinted/ttf/NotoSans/NotoSans-Regular.ttf",
-      ];
-    }
+    while (currentY < canvasHeight) {
+      let targetEndY = currentY + pageSliceHeightPx;
 
-    let base64Font: string | null = null;
-    if (fontUrls.length > 0) {
-      for (const url of fontUrls) {
-        try {
-          const res = await fetch(url);
-          if (res.ok) {
-            const arrayBuffer = await res.arrayBuffer();
-            let binary = "";
-            const bytes = new Uint8Array(arrayBuffer);
-            const len = bytes.byteLength;
-            for (let i = 0; i < len; i++) {
-              binary += String.fromCharCode(bytes[i]);
-            }
-            base64Font =
-              typeof btoa !== "undefined"
-                ? btoa(binary)
-                : typeof Buffer !== "undefined"
-                ? Buffer.from(binary, "binary").toString("base64")
-                : null;
-            break;
-          }
-        } catch {
-          // try next font mirror
-        }
+      if (targetEndY >= canvasHeight) {
+        pageSlices.push({ startY: currentY, endY: canvasHeight });
+        break;
       }
+
+      // Find the best clean split point near targetEndY
+      // Prefer breaking before the closest block above targetEndY
+      const candidateBreak = breakPositionsPx
+        .filter((y) => y > currentY + pageSliceHeightPx * 0.4 && y <= targetEndY)
+        .pop();
+
+      if (candidateBreak && targetEndY - candidateBreak < pageSliceHeightPx * 0.35) {
+        targetEndY = candidateBreak;
+      }
+
+      pageSlices.push({ startY: currentY, endY: targetEndY });
+      currentY = targetEndY;
     }
 
+    const totalPages = pageSlices.length;
+
+    // Initialize jsPDF document
     const doc = new jsPDF({
       orientation: "portrait",
       unit: "pt",
@@ -120,500 +174,108 @@ export async function generateStudyMaterialPdf(
       compress: true,
     });
 
-    if (base64Font && fontFileName && fontName) {
-      doc.addFileToVFS(fontFileName, base64Font);
-      doc.addFont(fontFileName, fontName, "normal", "Identity-H");
-      doc.setFont(fontName, "normal");
+    // Embed Noto Sans Tamil into PDF VFS for Unicode text selection and headers
+    const base64TamilFont = await getEmbeddedTamilFont();
+    if (base64TamilFont) {
+      try {
+        doc.addFileToVFS("NotoSansTamil.ttf", base64TamilFont);
+        doc.addFont("NotoSansTamil.ttf", "NotoSansTamil", "normal");
+        doc.setFont("NotoSansTamil", "normal");
+      } catch (err) {
+        console.warn("Could not register Tamil font in jsPDF VFS:", err);
+      }
     }
 
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const marginX = 45;
-    const marginTop = 50;
-    const marginBottom = 45;
-    const contentWidth = pageWidth - marginX * 2;
-
-    let y = marginTop;
-
-    const setFont = (bold: boolean = false) => {
-      if (fontName === "helvetica") {
-        doc.setFont("helvetica", bold ? "bold" : "normal");
+    const setDocFont = (bold: boolean = false) => {
+      if (base64TamilFont) {
+        doc.setFont("NotoSansTamil", "normal");
       } else {
-        doc.setFont(fontName, "normal");
+        doc.setFont("helvetica", bold ? "bold" : "normal");
       }
     };
 
-    const checkPageBreak = (neededHeight: number) => {
-      if (y + neededHeight > pageHeight - marginBottom) {
+    // Render each page slice onto PDF
+    for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
+      if (pageIdx > 0) {
         doc.addPage();
-        if (base64Font && fontFileName && fontName) {
-          doc.setFont(fontName, "normal");
-        }
-        y = marginTop;
-        drawPageHeader();
-      }
-    };
-
-    const drawPageHeader = () => {
-      // Subtle header bar on secondary pages
-      doc.setDrawColor(226, 232, 240); // slate-200
-      doc.setLineWidth(0.75);
-      doc.line(marginX, 32, pageWidth - marginX, 32);
-
-      setFont(false);
-      doc.setFontSize(8);
-      doc.setTextColor(148, 163, 184); // slate-400
-      doc.text(cleanTitle.slice(0, 50), marginX, 26);
-      doc.text("Study Notes", pageWidth - marginX, 26, { align: "right" });
-    };
-
-    // ==========================================
-    // 📖 DOCUMENT TITLE & DIRECT EDUCATIONAL START
-    // (NO artificial cover page, NO "STUDY MATERIAL" / "PAGES COVERED" headers)
-    // ==========================================
-
-    // Document Title (H1)
-    setFont(true);
-    doc.setFontSize(22);
-    doc.setTextColor(15, 23, 42); // slate-900
-    const titleLines = doc.splitTextToSize(cleanTitle, contentWidth) as string[];
-    titleLines.forEach((line) => {
-      doc.text(line, marginX, y);
-      y += 24;
-    });
-
-    // Subtitle / Meta (only if valid educational subtitle)
-    if (material.subtitle && !isArtificialSubtitle(material.subtitle)) {
-      setFont(false);
-      doc.setFontSize(11);
-      doc.setTextColor(100, 116, 139); // slate-500
-      const subLines = doc.splitTextToSize(material.subtitle, contentWidth) as string[];
-      subLines.forEach((line) => {
-        doc.text(line, marginX, y);
-        y += 14;
-      });
-    }
-
-    // Clean Accent Divider Line
-    y += 4;
-    doc.setDrawColor(99, 102, 241); // Indigo accent line
-    doc.setLineWidth(2);
-    doc.line(marginX, y, marginX + 60, y);
-    doc.setDrawColor(226, 232, 240); // slate-200
-    doc.setLineWidth(0.75);
-    doc.line(marginX + 65, y, pageWidth - marginX, y);
-
-    y += 20;
-
-    // ==========================================
-    // 📖 CHAPTERS & SECTIONS RENDERING
-    // ==========================================
-    for (let cIdx = 0; cIdx < cleanChapters.length; cIdx++) {
-      const ch = cleanChapters[cIdx];
-
-      // Chapter Header Banner
-      checkPageBreak(50);
-
-      // Chapter Pill/Banner Box
-      doc.setFillColor(238, 242, 255); // indigo-50
-      doc.setDrawColor(199, 210, 254); // indigo-200
-      doc.roundedRect(marginX, y, contentWidth, 28, 4, 4, "FD");
-
-      // Left vertical accent bar
-      doc.setFillColor(99, 102, 241);
-      doc.rect(marginX, y, 4, 28, "F");
-
-      const bannerTitle =
-        ch.sourcePages && !ch.chapterTitle.includes(ch.sourcePages)
-          ? `${ch.chapterTitle} (${ch.sourcePages})`
-          : ch.chapterTitle;
-
-      setFont(true);
-      doc.setFontSize(13);
-      doc.setTextColor(67, 56, 202); // indigo-700
-      doc.text(bannerTitle, marginX + 14, y + 18);
-
-      y += 36;
-
-      // Chapter Summary if any
-      if (ch.summary) {
-        checkPageBreak(30);
-        setFont(false);
-        doc.setFontSize(10);
-        doc.setTextColor(71, 85, 105);
-        const sumLines = doc.splitTextToSize(ch.summary, contentWidth - 10) as string[];
-        sumLines.forEach((line) => {
-          doc.text(line, marginX + 5, y);
-          y += 14;
-        });
-        y += 8;
       }
 
-      // Render each section in chapter
-      for (const sec of ch.sections) {
-        // Section Heading
-        checkPageBreak(40);
+      const slice = pageSlices[pageIdx];
+      const sliceH = slice.endY - slice.startY;
 
-        // Section Type icon/pill styling
-        let badgeColor = [99, 102, 241]; // indigo
-        let badgeBg = [238, 242, 255];
-        let sectionTextColor = [15, 23, 42];
+      // Create a canvas slice
+      const pageCanvas = document.createElement("canvas");
+      pageCanvas.width = canvasWidth;
+      pageCanvas.height = sliceH;
+      const ctx = pageCanvas.getContext("2d");
 
-        if (sec.type === "exam_points") {
-          badgeColor = [217, 119, 6]; // amber-600
-          badgeBg = [254, 243, 199]; // amber-100
-          sectionTextColor = [180, 83, 9];
-        } else if (sec.type === "quick_revision") {
-          badgeColor = [16, 185, 129]; // emerald-500
-          badgeBg = [209, 250, 229]; // emerald-100
-        } else if (sec.type === "facts" || sec.type === "dates") {
-          badgeColor = [6, 182, 212]; // cyan-500
-          badgeBg = [207, 250, 254]; // cyan-100
-        }
-
-        // Section Title
-        setFont(true);
-        doc.setFontSize(12);
-        doc.setTextColor(sectionTextColor[0], sectionTextColor[1], sectionTextColor[2]);
-        doc.text(sec.title, marginX + 4, y + 10);
-
-        // Underline section title
-        const secTitleWidth = doc.getTextWidth(sec.title);
-        doc.setDrawColor(badgeColor[0], badgeColor[1], badgeColor[2]);
-        doc.setLineWidth(1.2);
-        doc.line(marginX + 4, y + 14, marginX + 4 + Math.min(secTitleWidth, contentWidth), y + 14);
-
-        y += 24;
-
-        // 1. Introduction Content
-        if (sec.content) {
-          checkPageBreak(30);
-          setFont(false);
-          doc.setFontSize(10);
-          doc.setTextColor(51, 65, 85);
-          const cLines = doc.splitTextToSize(sec.content, contentWidth - 10) as string[];
-          cLines.forEach((line) => {
-            doc.text(line, marginX + 5, y);
-            y += 14;
-          });
-          y += 8;
-        }
-
-        // 2. Exam Important Points Box (Highlighted with border & gold/amber tint)
-        if (sec.type === "exam_points" && sec.items && sec.items.length > 0) {
-          for (const item of sec.items) {
-            setFont(false);
-            doc.setFontSize(9.5);
-            const itemLines = doc.splitTextToSize(item, contentWidth - 36) as string[];
-            const boxH = Math.max(22, itemLines.length * 13 + 12);
-
-            checkPageBreak(boxH + 6);
-
-            doc.setFillColor(255, 251, 235); // amber-50
-            doc.setDrawColor(245, 158, 11); // amber-500
-            doc.roundedRect(marginX, y, contentWidth, boxH, 3, 3, "FD");
-
-            // Left Gold Indicator Bar
-            doc.setFillColor(217, 119, 6);
-            doc.rect(marginX, y, 3.5, boxH, "F");
-
-            // Star / Bullet symbol
-            setFont(true);
-            doc.setFontSize(9);
-            doc.setTextColor(217, 119, 6);
-            doc.text("★", marginX + 8, y + 13);
-
-            setFont(false);
-            doc.setFontSize(9.5);
-            doc.setTextColor(69, 26, 3); // dark amber/brown
-
-            let textY = y + 13;
-            itemLines.forEach((line) => {
-              doc.text(line, marginX + 22, textY);
-              textY += 13;
-            });
-
-            y += boxH + 6;
-          }
-          y += 6;
-        }
-
-        // 3. Quick Revision (Arrow pairs: Key → Value)
-        else if (sec.type === "quick_revision" && sec.quickRevisionList && sec.quickRevisionList.length > 0) {
-          for (const pair of sec.quickRevisionList) {
-            const pairText = `${pair.key}  →  ${pair.value}`;
-            setFont(false);
-            doc.setFontSize(9.5);
-            const pairLines = doc.splitTextToSize(pairText, contentWidth - 30) as string[];
-            const cardH = Math.max(20, pairLines.length * 13 + 10);
-
-            checkPageBreak(cardH + 4);
-
-            doc.setFillColor(240, 253, 244); // emerald-50
-            doc.setDrawColor(187, 247, 208); // emerald-200
-            doc.roundedRect(marginX, y, contentWidth, cardH, 3, 3, "FD");
-
-            // Left Green Indicator Bar
-            doc.setFillColor(16, 185, 129);
-            doc.rect(marginX, y, 3, cardH, "F");
-
-            setFont(true);
-            doc.setFontSize(9.5);
-            doc.setTextColor(6, 78, 59); // emerald-900
-
-            let textY = y + 12;
-            pairLines.forEach((line) => {
-              doc.text(line, marginX + 12, textY);
-              textY += 13;
-            });
-
-            y += cardH + 4;
-          }
-          y += 6;
-        }
-
-        // 4. Important Dates (Date badge + event)
-        else if (sec.type === "dates" && sec.dateList && sec.dateList.length > 0) {
-          for (const d of sec.dateList) {
-            setFont(false);
-            doc.setFontSize(9.5);
-            const eventLines = doc.splitTextToSize(d.event, contentWidth - 110) as string[];
-            const rowH = Math.max(20, eventLines.length * 13 + 8);
-
-            checkPageBreak(rowH + 4);
-
-            // Date Badge
-            doc.setFillColor(224, 242, 254); // sky-100
-            doc.roundedRect(marginX, y, 80, 17, 3, 3, "F");
-            setFont(true);
-            doc.setFontSize(8.5);
-            doc.setTextColor(3, 105, 161); // sky-700
-            doc.text(d.date, marginX + 6, y + 12);
-
-            // Event description
-            setFont(false);
-            doc.setFontSize(9.5);
-            doc.setTextColor(30, 41, 59);
-            let textY = y + 12;
-            eventLines.forEach((line) => {
-              doc.text(line, marginX + 90, textY);
-              textY += 13;
-            });
-
-            y += rowH + 4;
-          }
-          y += 6;
-        }
-
-        // 5. Important People (Person card)
-        else if (sec.type === "people" && sec.peopleList && sec.peopleList.length > 0) {
-          for (const p of sec.peopleList) {
-            const desc = `${p.role ? `[${p.role}] ` : ""}${p.contribution}`;
-            setFont(false);
-            doc.setFontSize(9.5);
-            const descLines = doc.splitTextToSize(desc, contentWidth - 25) as string[];
-            const cardH = descLines.length * 13 + 22;
-
-            checkPageBreak(cardH + 6);
-
-            doc.setFillColor(248, 250, 252);
-            doc.setDrawColor(226, 232, 240);
-            doc.roundedRect(marginX, y, contentWidth, cardH, 3, 3, "FD");
-
-            // Name
-            setFont(true);
-            doc.setFontSize(10);
-            doc.setTextColor(15, 23, 42);
-            doc.text(`👤 ${p.name}`, marginX + 10, y + 14);
-
-            // Role / Contribution
-            setFont(false);
-            doc.setFontSize(9);
-            doc.setTextColor(71, 85, 105);
-            let textY = y + 27;
-            descLines.forEach((line) => {
-              doc.text(line, marginX + 10, textY);
-              textY += 13;
-            });
-
-            y += cardH + 6;
-          }
-          y += 6;
-        }
-
-        // 6. Definitions (Term in bold with clear definition)
-        else if (sec.type === "definitions" && sec.definitionList && sec.definitionList.length > 0) {
-          for (const def of sec.definitionList) {
-            setFont(false);
-            doc.setFontSize(9.5);
-            const defLines = doc.splitTextToSize(def.definition, contentWidth - 25) as string[];
-            const blockH = defLines.length * 13 + 22;
-
-            checkPageBreak(blockH + 5);
-
-            doc.setFillColor(245, 243, 255); // purple-50
-            doc.setDrawColor(221, 214, 254); // purple-200
-            doc.roundedRect(marginX, y, contentWidth, blockH, 3, 3, "FD");
-
-            // Term Header
-            setFont(true);
-            doc.setFontSize(10);
-            doc.setTextColor(109, 40, 217); // purple-700
-            doc.text(`📌 ${def.term}`, marginX + 10, y + 14);
-
-            // Definition Text
-            setFont(false);
-            doc.setFontSize(9.5);
-            doc.setTextColor(51, 65, 85);
-            let textY = y + 27;
-            defLines.forEach((line) => {
-              doc.text(line, marginX + 10, textY);
-              textY += 13;
-            });
-
-            y += blockH + 6;
-          }
-          y += 6;
-        }
-
-        // 7. Key Facts (Label: Value list or cards)
-        else if (sec.type === "facts" && sec.keyFactList && sec.keyFactList.length > 0) {
-          for (const fact of sec.keyFactList) {
-            const factText = `${fact.label}: ${fact.value}`;
-            setFont(false);
-            doc.setFontSize(9.5);
-            const factLines = doc.splitTextToSize(factText, contentWidth - 25) as string[];
-            const factH = Math.max(18, factLines.length * 13 + 8);
-
-            checkPageBreak(factH + 4);
-
-            // Bullet dot
-            doc.setFillColor(99, 102, 241);
-            doc.circle(marginX + 6, y + 9, 2.5, "F");
-
-            setFont(true);
-            doc.setFontSize(9.5);
-            doc.setTextColor(15, 23, 42);
-
-            let textY = y + 12;
-            factLines.forEach((line, li) => {
-              if (li > 0) setFont(false);
-              doc.text(line, marginX + 16, textY);
-              textY += 13;
-            });
-
-            y += factH + 4;
-          }
-          y += 6;
-        }
-
-        // 8. Structured Table
-        else if (sec.tableData && sec.tableData.headers && sec.tableData.rows && sec.tableData.rows.length > 0) {
-          const numCols = sec.tableData.headers.length;
-          const colWidth = contentWidth / numCols;
-          const headerHeight = 22;
-
-          checkPageBreak(headerHeight + 30);
-
-          // Table Header
-          doc.setFillColor(238, 242, 255); // indigo-50
-          doc.rect(marginX, y, contentWidth, headerHeight, "F");
-          doc.setDrawColor(199, 210, 254);
-          doc.setLineWidth(0.75);
-          doc.rect(marginX, y, contentWidth, headerHeight, "S");
-
-          setFont(true);
-          doc.setFontSize(9);
-          doc.setTextColor(67, 56, 202);
-
-          sec.tableData.headers.forEach((h, hi) => {
-            doc.text(h, marginX + hi * colWidth + 6, y + 14);
-          });
-
-          y += headerHeight;
-
-          // Table Rows
-          sec.tableData.rows.forEach((row, ri) => {
-            const isEven = ri % 2 === 0;
-            const rowHeight = 18;
-            checkPageBreak(rowHeight + 10);
-
-            if (isEven) {
-              doc.setFillColor(248, 250, 252);
-              doc.rect(marginX, y, contentWidth, rowHeight, "F");
-            }
-
-            doc.setDrawColor(226, 232, 240);
-            doc.rect(marginX, y, contentWidth, rowHeight, "S");
-
-            setFont(false);
-            doc.setFontSize(8.5);
-            doc.setTextColor(51, 65, 85);
-
-            row.forEach((cell, ci) => {
-              const cellText = String(cell || "").slice(0, 35);
-              doc.text(cellText, marginX + ci * colWidth + 6, y + 12);
-            });
-
-            y += rowHeight;
-          });
-
-          y += 12;
-        }
-
-        // 9. Standard Bullet Points / Concepts / Items
-        else if (sec.items && sec.items.length > 0) {
-          for (let pIdx = 0; pIdx < sec.items.length; pIdx++) {
-            const point = sec.items[pIdx];
-            setFont(false);
-            doc.setFontSize(9.5);
-            const pointLines = doc.splitTextToSize(point, contentWidth - 25) as string[];
-            const itemH = pointLines.length * 13 + 4;
-
-            checkPageBreak(itemH + 4);
-
-            // Draw bullet dot
-            doc.setFillColor(99, 102, 241); // indigo bullet
-            doc.circle(marginX + 6, y + 7, 2, "F");
-
-            doc.setTextColor(30, 41, 59); // slate-800
-            let textY = y + 10;
-            pointLines.forEach((line) => {
-              doc.text(line, marginX + 16, textY);
-              textY += 13;
-            });
-
-            y += itemH + 3;
-          }
-          y += 8;
-        }
+      if (ctx) {
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, canvasWidth, sliceH);
+        ctx.drawImage(
+          canvas,
+          0,
+          slice.startY,
+          canvasWidth,
+          sliceH,
+          0,
+          0,
+          canvasWidth,
+          sliceH
+        );
       }
 
-      y += 12; // Gap after chapter
-    }
+      const imgData = pageCanvas.toDataURL("image/jpeg", 0.95);
+      const renderedHeightPt = sliceH / pxPerPt;
 
-    // ==========================================
-    // 📄 FOOTER & PAGE NUMBERS ON ALL PAGES
-    // ==========================================
-    const totalPages = doc.getNumberOfPages();
-    for (let p = 1; p <= totalPages; p++) {
-      doc.setPage(p);
+      // Draw Header on secondary pages
+      if (pageIdx > 0) {
+        doc.setDrawColor(226, 232, 240); // slate-200
+        doc.setLineWidth(0.75);
+        doc.line(marginPt, 26, pdfPageWidth - marginPt, 26);
+
+        setDocFont(false);
+        doc.setFontSize(8);
+        doc.setTextColor(148, 163, 184); // slate-400
+        doc.text(cleanTitle.slice(0, 55), marginPt, 20);
+        doc.text("Study Notes", pdfPageWidth - marginPt, 20, { align: "right" });
+      }
+
+      // Draw the pixel-perfect page canvas
+      const topY = pageIdx === 0 ? marginPt : headerHeightPt;
+      doc.addImage(
+        imgData,
+        "JPEG",
+        marginPt,
+        topY,
+        usableWidthPt,
+        renderedHeightPt,
+        undefined,
+        "FAST"
+      );
+
+      // Draw Footer & Page Numbering on all pages
       doc.setDrawColor(226, 232, 240);
       doc.setLineWidth(0.75);
-      doc.line(marginX, pageHeight - 30, pageWidth - marginX, pageHeight - 30);
+      doc.line(
+        marginPt,
+        pdfPageHeight - footerHeightPt + 10,
+        pdfPageWidth - marginPt,
+        pdfPageHeight - footerHeightPt + 10
+      );
 
-      setFont(false);
+      setDocFont(false);
       doc.setFontSize(8);
       doc.setTextColor(148, 163, 184);
       doc.text(
-        `Page ${p} of ${totalPages}`,
-        pageWidth - marginX,
-        pageHeight - 18,
+        `Page ${pageIdx + 1} of ${totalPages}`,
+        pdfPageWidth - marginPt,
+        pdfPageHeight - 14,
         { align: "right" }
       );
     }
 
-    // Direct auto-download (NO browser print preview modal)
+    // Save and download PDF directly
     const cleanName = material.pdf_name.replace(/\.(pdf|docx?)$/i, "").replace(/\s+/g, "_");
     const downloadFileName = `${cleanName}_Study_Material.pdf`;
 
@@ -622,7 +284,7 @@ export async function generateStudyMaterialPdf(
     toast.dismiss(toastId);
     toast.success(`Study Material PDF downloaded (${downloadFileName})!`);
     if (options?.onSuccess) options.onSuccess();
-  } catch (err) {
+  } catch (err: any) {
     toast.dismiss(toastId);
     console.error("Study Material PDF generation error:", err);
     toast.error("Failed to generate Study Material PDF.");
@@ -630,7 +292,154 @@ export async function generateStudyMaterialPdf(
   }
 }
 
-// Word (.docx) generator for Study Material
+/**
+ * Builds standalone HTML markup matching the shared design system
+ * for off-screen rendering when DOM element is not currently in viewport.
+ */
+function buildDocumentHtmlString(
+  material: StudyMaterialData,
+  title: string,
+  chapters: any[]
+): string {
+  const subtitleHtml =
+    material.subtitle && !isArtificialSubtitle(material.subtitle)
+      ? `<p style="font-size: 14px; color: #475569; margin-top: 6px; font-weight: 500;">${escapeHtml(
+          material.subtitle
+        )}</p>`
+      : "";
+
+  let chaptersHtml = "";
+  for (let c = 0; c < chapters.length; c++) {
+    const ch = chapters[c];
+    const sourceBadge = ch.sourcePages
+      ? `<span style="background: rgba(255,255,255,0.9); color: #3730a3; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 9999px; border: 1px solid #c7d2fe; margin-right: 8px;">${escapeHtml(
+          ch.sourcePages
+        )}</span>`
+      : "";
+
+    let sectionsHtml = "";
+    for (let s = 0; s < (ch.sections || []).length; s++) {
+      const sec = ch.sections[s];
+
+      let secContent = "";
+      if (sec.content) {
+        secContent += `<p style="font-size: 14px; color: #334155; line-height: 1.6; padding-left: 12px; border-left: 2px solid #cbd5e1; margin-bottom: 12px;">${escapeHtml(
+          sec.content
+        )}</p>`;
+      }
+
+      if (sec.type === "exam_points" && sec.items) {
+        secContent += `<div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;">`;
+        for (const item of sec.items) {
+          secContent += `<div style="padding: 12px; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 12px; display: flex; gap: 10px; font-size: 14px; font-weight: 600; color: #451a03; line-height: 1.5;"><span style="color: #d97706;">★</span><span>${escapeHtml(
+            item
+          )}</span></div>`;
+        }
+        secContent += `</div>`;
+      } else if (sec.type === "quick_revision" && sec.quickRevisionList) {
+        secContent += `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">`;
+        for (const qr of sec.quickRevisionList) {
+          secContent += `<div style="padding: 10px 14px; background: #ecfdf5; border: 1px solid #6ee7b7; border-radius: 12px; display: flex; justify-content: space-between; align-items: center;"><span style="font-weight: 800; color: #064e3b; font-size: 13px;">${escapeHtml(
+            qr.key
+          )}</span><span style="color: #059669; margin: 0 8px;">→</span><span style="font-weight: 600; color: #1e293b; font-size: 13px; text-align: right;">${escapeHtml(
+            qr.value
+          )}</span></div>`;
+        }
+        secContent += `</div>`;
+      } else if (sec.type === "facts" && sec.keyFactList) {
+        secContent += `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;">`;
+        for (const f of sec.keyFactList) {
+          secContent += `<div style="padding: 10px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; font-size: 13px;"><strong style="color: #0f172a;">${escapeHtml(
+            f.label
+          )}:</strong> <span style="color: #334155;">${escapeHtml(f.value)}</span></div>`;
+        }
+        secContent += `</div>`;
+      } else if (sec.type === "dates" && sec.dateList) {
+        secContent += `<div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;">`;
+        for (const d of sec.dateList) {
+          secContent += `<div style="padding: 8px 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; display: flex; align-items: center; gap: 12px; font-size: 13px;"><span style="background: #e0f2fe; color: #0369a1; font-weight: 800; padding: 2px 8px; border-radius: 6px; font-size: 11px;">${escapeHtml(
+            d.date
+          )}</span><span style="color: #1e293b; font-weight: 500;">${escapeHtml(d.event)}</span></div>`;
+        }
+        secContent += `</div>`;
+      } else if (sec.items) {
+        secContent += `<ul style="margin: 0; padding-left: 8px; list-style: none;">`;
+        for (const item of sec.items) {
+          secContent += `<li style="display: flex; align-items: flex-start; gap: 10px; font-size: 14px; color: #1e293b; line-height: 1.6; margin-bottom: 6px;"><span style="height: 6px; width: 6px; border-radius: 50%; background: #4f46e5; margin-top: 8px; shrink: 0;"></span><span>${escapeHtml(
+            item
+          )}</span></li>`;
+        }
+        secContent += `</ul>`;
+      }
+
+      sectionsHtml += `
+        <div class="pdf-block" style="margin-top: 16px;">
+          <div style="display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; margin-bottom: 10px;">
+            <span style="height: 10px; width: 10px; border-radius: 50%; background: #4f46e5;"></span>
+            <h3 style="margin: 0; font-size: 16px; font-weight: 700; color: #1e293b;">${escapeHtml(
+              sec.title
+            )}</h3>
+          </div>
+          ${secContent}
+        </div>
+      `;
+    }
+
+    chaptersHtml += `
+      <div class="chapter-container" style="margin-top: 28px;">
+        <div class="pdf-block" style="padding: 14px 18px; background: #eef2ff; border-left: 4px solid #4f46e5; border-radius: 0 12px 12px 0; display: flex; justify-content: space-between; align-items: center;">
+          <h2 style="margin: 0; font-size: 18px; font-weight: 800; color: #1e1b4b;">${escapeHtml(
+            ch.chapterTitle
+          )}</h2>
+          <div>
+            ${sourceBadge}
+            <span style="background: #4f46e5; color: #ffffff; font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 9999px;">Chapter ${
+              ch.chapterNumber || c + 1
+            }</span>
+          </div>
+        </div>
+        ${
+          ch.summary
+            ? `<p style="font-size: 13px; color: #3730a3; font-style: italic; margin: 8px 0 16px 4px;">${escapeHtml(
+                ch.summary
+              )}</p>`
+            : ""
+        }
+        <div style="padding-left: 6px;">
+          ${sectionsHtml}
+        </div>
+      </div>
+    `;
+  }
+
+  return `
+    <div style="font-family: 'Noto Sans Tamil Local', 'Noto Sans Tamil', 'Inter', sans-serif; padding: 36px 40px; background: #ffffff; color: #0f172a; width: 800px; box-sizing: border-box;">
+      <div class="pdf-block" style="border-bottom: 2px solid #4f46e5; padding-bottom: 16px; margin-bottom: 24px;">
+        <h1 style="margin: 0; font-size: 26px; font-weight: 900; color: #0f172a; line-height: 1.3;">${escapeHtml(
+          title
+        )}</h1>
+        ${subtitleHtml}
+      </div>
+      <div>
+        ${chaptersHtml}
+      </div>
+    </div>
+  `;
+}
+
+function escapeHtml(str: string): string {
+  if (!str) return "";
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+/**
+ * Word (.docx) export for Study Material
+ */
 export async function generateStudyMaterialWord(
   material: StudyMaterialData,
   options?: PdfExportOptions
@@ -640,7 +449,7 @@ export async function generateStudyMaterialWord(
   try {
     const cleanChapters = filterEducationalChapters(material.chapters);
     const cleanTitle = cleanDocumentTitle(material.title, cleanChapters[0]?.chapterTitle);
-    const docChildren: (Paragraph | Table)[] = [];
+    const docChildren: Paragraph[] = [];
 
     // Title
     docChildren.push(
@@ -651,7 +460,6 @@ export async function generateStudyMaterialWord(
       })
     );
 
-    // Subtitle (only if valid educational subtitle)
     if (material.subtitle && !isArtificialSubtitle(material.subtitle)) {
       docChildren.push(
         new Paragraph({
@@ -669,7 +477,6 @@ export async function generateStudyMaterialWord(
 
     // Chapters
     for (const ch of cleanChapters) {
-      // Chapter Heading (H1)
       docChildren.push(
         new Paragraph({
           text: ch.chapterTitle,
@@ -687,9 +494,7 @@ export async function generateStudyMaterialWord(
         );
       }
 
-      // Sections
       for (const sec of ch.sections) {
-        // Section Title (H2)
         docChildren.push(
           new Paragraph({
             text: sec.title,
@@ -759,20 +564,6 @@ export async function generateStudyMaterialWord(
             );
           });
         }
-
-        if (sec.definitionList) {
-          sec.definitionList.forEach((def) => {
-            docChildren.push(
-              new Paragraph({
-                children: [
-                  new TextRun({ text: `${def.term}: `, bold: true, color: "7c3aed" }),
-                  new TextRun({ text: def.definition }),
-                ],
-                spacing: { after: 80 },
-              })
-            );
-          });
-        }
       }
     }
 
@@ -787,7 +578,7 @@ export async function generateStudyMaterialWord(
     toast.dismiss(toastId);
     toast.success("Study Material Word (.docx) downloaded!");
     if (options?.onSuccess) options.onSuccess();
-  } catch (err) {
+  } catch (err: any) {
     toast.dismiss(toastId);
     console.error("Word generation error:", err);
     toast.error("Failed to generate Word document.");

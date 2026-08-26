@@ -54,6 +54,9 @@ interface StudyMaterialConfigureProps {
   onFinished: (material: StudyMaterialData, timeSec: number) => void;
   selectedLanguage: string;
   setSelectedLanguage: (lang: string) => void;
+  tamilLlamaUrl?: string;
+  tamilLlamaKey?: string;
+  tamilLlamaModel?: string;
 }
 
 type ChecklistStep = {
@@ -72,6 +75,9 @@ export function StudyMaterialConfigureStage({
   onFinished,
   selectedLanguage,
   setSelectedLanguage,
+  tamilLlamaUrl,
+  tamilLlamaKey,
+  tamilLlamaModel,
 }: StudyMaterialConfigureProps) {
   const [busy, setBusy] = useState(false);
   const [genTime, setGenTime] = useState(0);
@@ -201,6 +207,9 @@ export function StudyMaterialConfigureStage({
           apiProvider,
           modelName,
           selectedLanguage: selectedLanguage || detectedLanguage,
+          tamilLlamaUrl,
+          tamilLlamaKey,
+          tamilLlamaModel,
         }),
       });
 

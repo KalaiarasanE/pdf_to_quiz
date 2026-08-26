@@ -85,6 +85,62 @@ export default {
         }
       }
 
+      if (url.pathname === "/api/check-tamilllama" && (request.method === "POST" || request.method === "GET")) {
+        try {
+          let bodyData: any = {};
+          if (request.method === "POST") {
+            bodyData = await request.json().catch(() => ({}));
+          }
+          const { getTamilLlamaConfig } = await import("./lib/tamilllama.server");
+          const config = getTamilLlamaConfig(bodyData, env);
+
+          // Ping endpoint
+          const isV1 = config.apiUrl.endsWith("/v1") || config.apiUrl.includes("/v1/");
+          const testUrl = isV1 ? `${config.apiUrl}/models` : `${config.apiUrl}/api/tags`;
+
+          const headers: Record<string, string> = { "Content-Type": "application/json" };
+          if (config.apiKey) headers["Authorization"] = `Bearer ${config.apiKey}`;
+
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 4000);
+
+          try {
+            const res = await fetch(testUrl, { method: "GET", headers, signal: controller.signal });
+            clearTimeout(timeoutId);
+            if (res.ok) {
+              return new Response(
+                JSON.stringify({
+                  available: true,
+                  endpoint: config.apiUrl,
+                  model: config.model,
+                  message: `TamilLlama 3.0 connected at ${config.apiUrl}`,
+                }),
+                { headers: { "Content-Type": "application/json" } }
+              );
+            }
+          } catch {}
+
+          return new Response(
+            JSON.stringify({
+              available: false,
+              endpoint: config.apiUrl,
+              model: config.model,
+              message:
+                "TamilLlama 3.0 local server not detected. Automatic high-fidelity Tamil linguistic validation fallback is active.",
+            }),
+            { headers: { "Content-Type": "application/json" } }
+          );
+        } catch (error) {
+          return new Response(
+            JSON.stringify({
+              available: false,
+              message: "Tamil linguistic validation fallback active.",
+            }),
+            { headers: { "Content-Type": "application/json" } }
+          );
+        }
+      }
+
       if (url.pathname === "/api/generate" && request.method === "POST") {
         try {
           const config = await request.json();

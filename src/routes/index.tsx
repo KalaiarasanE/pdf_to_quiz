@@ -193,10 +193,10 @@ const generateExamPdf = (
 
   if (/[\u0B80-\u0BFF]/.test(fullQuestionsText)) {
     fontName = "NotoSansTamil";
-    fontFileName = "NotoSansTamil-Regular.ttf";
+    fontFileName = "NotoSansTamil.ttf";
     fontUrls = [
-      "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansTamil/NotoSansTamil-Regular.ttf",
-      "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts/main/hinted/ttf/NotoSansTamil/NotoSansTamil-Regular.ttf",
+      "/fonts/NotoSansTamil.ttf",
+      "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanstamil/NotoSansTamil%5Bwdth%2Cwght%5D.ttf",
     ];
   } else if (/[\u0900-\u097F]/.test(fullQuestionsText)) {
     fontName = "NotoSansDevanagari";
@@ -845,6 +845,9 @@ function App() {
   const [apiProvider, setApiProvider] = useState<"gemini" | "openai" | "lovable">("gemini");
   const [modelName, setModelName] = useState<string>("gemini-3.1-flash-lite");
   const [selectedLanguage, setSelectedLanguage] = useState<string>("");
+  const [tamilLlamaUrl, setTamilLlamaUrl] = useState<string>("http://localhost:11434/v1");
+  const [tamilLlamaModel, setTamilLlamaModel] = useState<string>("tamilllama:3.0");
+  const [tamilLlamaKey, setTamilLlamaKey] = useState<string>("");
 
   // Supabase & Auth states
   const [user, setUser] = useState<any>(null);
@@ -1473,10 +1476,16 @@ function App() {
     const savedProvider = safeGetItem("quizcrack_provider");
     const savedModel = safeGetItem("quizcrack_model");
     const savedTheme = safeGetItem("quizcrack_theme");
+    const savedTamilUrl = safeGetItem("quizcrack_tamilllama_url");
+    const savedTamilModel = safeGetItem("quizcrack_tamilllama_model");
+    const savedTamilKey = safeGetItem("quizcrack_tamilllama_key");
 
     if (savedApiKey) setApiKey(savedApiKey);
     if (savedProvider) setApiProvider(savedProvider as any);
     if (savedModel) setModelName(savedModel);
+    if (savedTamilUrl) setTamilLlamaUrl(savedTamilUrl);
+    if (savedTamilModel) setTamilLlamaModel(savedTamilModel);
+    if (savedTamilKey) setTamilLlamaKey(savedTamilKey);
 
     const isDark = savedTheme !== "light";
     setDarkMode(isDark);
@@ -1960,6 +1969,9 @@ function App() {
                   onBack={() => setStage("upload")}
                   selectedLanguage={selectedLanguage}
                   setSelectedLanguage={setSelectedLanguage}
+                  tamilLlamaUrl={tamilLlamaUrl}
+                  tamilLlamaKey={tamilLlamaKey}
+                  tamilLlamaModel={tamilLlamaModel}
                   onFinished={(materialData, timeSec) => {
                     setStudyMaterial(materialData);
                     setStage("study-material-preview");
@@ -2012,6 +2024,21 @@ function App() {
               setModelName={(m) => {
                 setModelName(m);
                 safeSetItem("quizcrack_model", m);
+              }}
+              tamilLlamaUrl={tamilLlamaUrl}
+              setTamilLlamaUrl={(url) => {
+                setTamilLlamaUrl(url);
+                safeSetItem("quizcrack_tamilllama_url", url);
+              }}
+              tamilLlamaModel={tamilLlamaModel}
+              setTamilLlamaModel={(m) => {
+                setTamilLlamaModel(m);
+                safeSetItem("quizcrack_tamilllama_model", m);
+              }}
+              tamilLlamaKey={tamilLlamaKey}
+              setTamilLlamaKey={(k) => {
+                setTamilLlamaKey(k);
+                safeSetItem("quizcrack_tamilllama_key", k);
               }}
             />
           )}
@@ -2185,6 +2212,9 @@ function App() {
                   }}
                   selectedLanguage={selectedLanguage}
                   setSelectedLanguage={setSelectedLanguage}
+                  tamilLlamaUrl={tamilLlamaUrl}
+                  tamilLlamaKey={tamilLlamaKey}
+                  tamilLlamaModel={tamilLlamaModel}
                   onFinished={(list, timeSec) => {
                     setMcqs(list);
                     setStage("review");
@@ -2501,6 +2531,12 @@ type SettingsProps = {
   setApiProvider: (p: "gemini" | "openai" | "lovable") => void;
   modelName: string;
   setModelName: (m: string) => void;
+  tamilLlamaUrl: string;
+  setTamilLlamaUrl: (url: string) => void;
+  tamilLlamaModel: string;
+  setTamilLlamaModel: (m: string) => void;
+  tamilLlamaKey: string;
+  setTamilLlamaKey: (k: string) => void;
 };
 
 function Settings({
@@ -2510,6 +2546,12 @@ function Settings({
   setApiProvider,
   modelName,
   setModelName,
+  tamilLlamaUrl,
+  setTamilLlamaUrl,
+  tamilLlamaModel,
+  setTamilLlamaModel,
+  tamilLlamaKey,
+  setTamilLlamaKey,
 }: SettingsProps) {
   // Sync model choices based on provider
   useEffect(() => {
@@ -2628,6 +2670,97 @@ function Settings({
           ) : (
             <Input disabled value="Google Gemini 3.5 Flash (Server)" className="mt-1" />
           )}
+        </div>
+
+        {/* TamilLlama 3.0 Configuration */}
+        <div className="space-y-4 border-t border-border/60 pt-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <Label className="text-sm font-bold flex items-center gap-1.5">
+                <Sparkles className="h-4 w-4 text-indigo-400" />
+                TamilLlama 3.0 Configuration
+              </Label>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Specialized Tamil generation, grammar correction, and refinement engine.
+              </p>
+            </div>
+            <Badge variant="outline" className="text-[10px] text-indigo-400 border-indigo-500/30">
+              Tamil Standard
+            </Badge>
+          </div>
+
+          <div>
+            <Label htmlFor="tamilLlamaUrl" className="text-xs">TamilLlama API Endpoint</Label>
+            <Input
+              id="tamilLlamaUrl"
+              placeholder="http://localhost:11434/v1"
+              value={tamilLlamaUrl}
+              onChange={(e) => setTamilLlamaUrl(e.target.value)}
+              className="mt-1 font-mono text-xs"
+            />
+            <p className="text-[11px] text-muted-foreground mt-1">
+              Supports Ollama local (http://localhost:11434/v1) or custom OpenAI-compatible server.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="tamilLlamaModel" className="text-xs">Model Identifier</Label>
+              <Input
+                id="tamilLlamaModel"
+                placeholder="tamilllama:3.0"
+                value={tamilLlamaModel}
+                onChange={(e) => setTamilLlamaModel(e.target.value)}
+                className="mt-1 font-mono text-xs"
+              />
+            </div>
+            <div>
+              <Label htmlFor="tamilLlamaKey" className="text-xs">API Key (Optional)</Label>
+              <Input
+                id="tamilLlamaKey"
+                type="password"
+                placeholder="Optional for local / Required for cloud"
+                value={tamilLlamaKey}
+                onChange={(e) => setTamilLlamaKey(e.target.value)}
+                className="mt-1 text-xs"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="text-xs h-9"
+              onClick={async () => {
+                try {
+                  const res = await fetch("/api/check-tamilllama", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      apiUrl: tamilLlamaUrl,
+                      model: tamilLlamaModel,
+                      apiKey: tamilLlamaKey,
+                    }),
+                  });
+                  const data = await res.json();
+                  if (data.available) {
+                    toast.success(data.message);
+                  } else {
+                    toast.info(data.message);
+                  }
+                } catch (e: any) {
+                  toast.error("Could not check TamilLlama status: " + e.message);
+                }
+              }}
+            >
+              Test TamilLlama Connection
+            </Button>
+            <span className="text-[11px] text-muted-foreground">
+              Fallback to high-fidelity Tamil linguistic validation is active if offline.
+            </span>
+          </div>
         </div>
       </div>
 
@@ -3083,6 +3216,9 @@ type ConfigureProps = {
   onSwitchToStudyMaterial?: () => void;
   selectedLanguage: string;
   setSelectedLanguage: (lang: string) => void;
+  tamilLlamaUrl?: string;
+  tamilLlamaKey?: string;
+  tamilLlamaModel?: string;
 };
 
 type ChecklistStep = {
@@ -3103,6 +3239,9 @@ function ConfigureStage({
   onSwitchToStudyMaterial,
   selectedLanguage,
   setSelectedLanguage,
+  tamilLlamaUrl,
+  tamilLlamaKey,
+  tamilLlamaModel,
 }: ConfigureProps) {
 
   const [count, setCount] = useState<number>(20);
@@ -3461,6 +3600,9 @@ function ConfigureStage({
                 apiProvider,
                 modelName,
                 selectedLanguage,
+                tamilLlamaUrl,
+                tamilLlamaKey,
+                tamilLlamaModel,
               }),
             });
 

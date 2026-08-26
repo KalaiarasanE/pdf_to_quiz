@@ -9,6 +9,12 @@ import {
   isNonEducationalSectionTitle,
   isNonEducationalText,
 } from "./study-material.types";
+import {
+  cleanPdfExtractedText,
+  validateAndRefineTamilStudyMaterial,
+  isTamilText,
+  TAMILLLAMA_SYSTEM_PROMPT,
+} from "./tamilllama.server";
 
 export interface StudyMaterialConfig {
   text?: string;
@@ -20,6 +26,9 @@ export interface StudyMaterialConfig {
   modelName?: string;
   env?: any;
   selectedLanguage?: string;
+  tamilLlamaUrl?: string;
+  tamilLlamaKey?: string;
+  tamilLlamaModel?: string;
 }
 
 interface PageChunk {
@@ -78,7 +87,7 @@ export async function* generateStudyMaterialStream(
         startPage === endPage ? `Page ${startPage}` : `Pages ${startPage}–${endPage}`;
 
       const chunkText = pageSlice
-        .map((page) => `--- [PAGE ${page.pageNum} OF ${totalPagesCount}] ---\n${page.text}`)
+        .map((page) => `--- [PAGE ${page.pageNum} OF ${totalPagesCount}] ---\n${cleanPdfExtractedText(page.text)}`)
         .join("\n\n");
 
       // Only add chunk if it has extractable content
@@ -94,9 +103,10 @@ export async function* generateStudyMaterialStream(
       }
     }
   } else {
-    // Break raw text by page markers or paragraph blocks (~3500 chars per chunk)
+    // Break cleaned raw text by page markers or paragraph blocks (~3500 chars per chunk)
+    const cleanedFullText = cleanPdfExtractedText(text);
     const MAX_CHUNK_CHARS = 4000;
-    const pageDelimiters = text.split(/(?:--- Page \d+ ---|\n\s*---\s*\n|\f)/i);
+    const pageDelimiters = cleanedFullText.split(/(?:--- Page \d+ ---|\n\s*---\s*\n|\f)/i);
 
     if (pageDelimiters.length > 1) {
       let chunkIdx = 0;
@@ -114,7 +124,7 @@ export async function* generateStudyMaterialStream(
         }
       }
     } else {
-      const paragraphs = text.split(/\n\s*\n/);
+      const paragraphs = cleanedFullText.split(/\n\s*\n/);
       let currentChunkText = "";
       let chunkIdx = 0;
 
@@ -166,10 +176,23 @@ export async function* generateStudyMaterialStream(
     totalChapters: chunks.length,
   };
 
-  // Language instructions
+  const isInputTamil =
+    selectedLanguage === "Tamil" ||
+    isTamilText(text) ||
+    (pageList && pageList.some((p) => isTamilText(p.text)));
+
+  // Language instructions adhering to TamilLlama 3.0 standards
   const languageInstruction =
     selectedLanguage && selectedLanguage === "Tanglish"
       ? `You MUST write the entire study material in Tanglish (Tamil language written phonetically using standard Latin/English alphabet). Rules for Tanglish: Do NOT use Tamil Unicode characters. Translate Tamil vocabulary and sentence structure into Latin letters phonetically (e.g., "India oda capital Delhi", "1773 la Regulating Act kondu vandhanga"). Maintain clear, natural, and standard Tanglish suitable for competitive exam revision.`
+      : selectedLanguage === "Tamil" || isInputTamil
+      ? `You MUST write the entire study material in pure, elegant, standard educational/exam Tamil (செந்தமிழ் / தேர்வுத் தமிழ்) adhering strictly to TamilLlama 3.0 linguistic standards:
+1. Pure, grammatically sound Tamil sentence structure (Subject-Object-Verb natural phrasing; NEVER awkward literal word-by-word machine translations).
+2. Zero spelling mistakes. Pay extreme care to consonant variants: ண/ன/ந, ல/ள/ழ, ர/ற.
+3. Clean Tamil Unicode only. All consonant-vowel combinations (ங, ஞ, ட, ண, த, ந, ப, ம, ய, ர, ல, வ, ழ, ள, ற, ன) must be uncorrupted and properly combined without broken diacritics.
+4. Use standard Tamil academic and exam vocabulary (முன்னுரை, அடிப்படைக் கோட்பாடுகள், முக்கிய குறிப்புகள், தேர்வு முக்கிய கருத்துக்கள், விரைவு திருப்புதல், வரையறைகள்).
+5. Accurately preserve technical names, constitutional articles, statutory acts, scientific formulas, historical dates, and percentages without corruption or hallucination.
+6. Do not duplicate sections or repeat paragraphs.`
       : selectedLanguage && selectedLanguage !== "mixed"
       ? `You MUST write the entire study material in "${selectedLanguage}" language.`
       : `You MUST detect the primary language of the uploaded document (e.g., Tamil, English, Hindi, Telugu, etc.) and write the entire study material in the EXACT same language as the uploaded document. For example, if the document is in Tamil, output proper Tamil Unicode. Never translate unless the user explicitly requests translation. Use proper Unicode without corrupted characters.`;
@@ -433,11 +456,59 @@ ${chunk.text}
     estimated_read_time_minutes: estimatedReadTime,
   };
 
+  let validatedMaterial = finalMaterial;
+  const isTamilTarget =
+    selectedLanguage === "Tamil" ||
+    isTamilText(finalMaterial.title) ||
+    finalChapters.some((c) => isTamilText(c.chapterTitle));
+
+  if (isTamilTarget) {
+    yield {
+      stage: "finalizing",
+      message:
+        "Running TamilLlama 3.0 Tamil validation & correction pass (spelling, grammar, Unicode, and factual verification)...",
+      completedChapters: finalChapters,
+    };
+
+    try {
+      const validationRes = await validateAndRefineTamilStudyMaterial(finalMaterial, env, {
+        config: {
+          apiUrl: config.tamilLlamaUrl,
+          apiKey: config.tamilLlamaKey,
+          modelName: config.tamilLlamaModel,
+        },
+        fallbackAiOptions: {
+          apiKey,
+          apiProvider,
+          modelName,
+          serverGeminiKey,
+          serverOpenAIKey,
+        },
+      });
+
+      validatedMaterial = validationRes.data;
+      const statusMsg = validationRes.refinedWithTamilLlama
+        ? "✓ Validated & refined with TamilLlama 3.0"
+        : "✓ Validated & refined with Tamil linguistic validation engine";
+
+      yield {
+        stage: "finalizing",
+        message: `${statusMsg}. Preparing website preview...`,
+        completedChapters: validatedMaterial.chapters,
+      };
+    } catch (err) {
+      console.warn(
+        "Tamil validation pass encountered an issue, preserving generated content:",
+        err,
+      );
+    }
+  }
+
   yield {
     stage: "completed",
-    message: `Completed! Processed all ${docTotalPages} pages into ${finalChapters.length} comprehensive chapters (${totalPointsCount} study points).`,
-    completedChapters: finalChapters,
-    studyMaterial: finalMaterial,
+    message: `Completed! Processed all ${docTotalPages} pages into ${validatedMaterial.chapters.length} comprehensive chapters (${totalPointsCount} study points).`,
+    completedChapters: validatedMaterial.chapters,
+    studyMaterial: validatedMaterial,
   };
 }
 

@@ -1,4 +1,8 @@
-import { Readable } from "stream";
+import {
+  cleanPdfExtractedText,
+  validateAndRefineTamilMCQs,
+  isTamilText,
+} from "./tamilllama.server";
 
 export interface StreamConfig {
   text: string;
@@ -9,6 +13,9 @@ export interface StreamConfig {
   modelName?: string;
   env?: any;
   selectedLanguage?: string;
+  tamilLlamaUrl?: string;
+  tamilLlamaKey?: string;
+  tamilLlamaModel?: string;
 }
 
 export type MCQ = {
@@ -30,6 +37,9 @@ export async function* generateMCQStream(config: StreamConfig): AsyncGenerator<M
     modelName,
     env,
     selectedLanguage,
+    tamilLlamaUrl,
+    tamilLlamaKey,
+    tamilLlamaModel,
   } = config;
 
   const serverGeminiKey =
@@ -39,9 +49,12 @@ export async function* generateMCQStream(config: StreamConfig): AsyncGenerator<M
   const serverLovableKey =
     (env && typeof env === "object" && (env as any).LOVABLE_API_KEY) || process.env.LOVABLE_API_KEY;
 
-  // Truncate long texts
+  // Clean raw PDF extracted text to remove headers/footers, page numbers, watermarks, ads, OCR noise
+  const cleanedText = cleanPdfExtractedText(text);
   const MAX_CHARS = 100000;
-  const sourceText = text.length > MAX_CHARS ? text.slice(0, MAX_CHARS) : text;
+  const sourceText = cleanedText.length > MAX_CHARS ? cleanedText.slice(0, MAX_CHARS) : cleanedText;
+
+  const isTamil = selectedLanguage === "Tamil" || isTamilText(sourceText);
 
   const difficultyLine =
     difficulty === "Mixed"
@@ -51,12 +64,20 @@ export async function* generateMCQStream(config: StreamConfig): AsyncGenerator<M
   const languageInstruction =
     selectedLanguage && selectedLanguage === "Tanglish"
       ? `You MUST generate all questions, options, correct answers, and explanations in Tanglish (Tamil language written phonetically using standard English/Latin letters). Rules for Tanglish: Do NOT use Tamil Unicode characters (e.g. தமிழ்). Translate Tamil vocabulary and sentence structure into Latin letters phonetically (e.g., "India oda capital enna?" or "Ulagathin miga uyarndha sigaram edhu?"). Distractors and explanations must also be in readable Tanglish. Maintain proper readability and natural Tanglish sentences.`
+      : selectedLanguage === "Tamil" || isTamil
+      ? `You MUST generate all questions, options, correct answers, and explanations in pure, standard educational/exam Tamil (செந்தமிழ்/தேர்வுத் தமிழ்) following TamilLlama 3.0 standards:
+- Grammatically sound Tamil question syntax (Subject-Object-Verb natural flow ending with 'எது?', 'யார்?', 'எப்போது?', 'என்ன?', 'சரியான விடையைத் தேர்ந்தெடுக்கவும்').
+- Exactly 4 distinct options per question.
+- Exactly ONE clearly correct answer matching one of the options verbatim.
+- Distractors must be plausible, meaningful, and of comparable length to the correct answer.
+- Zero spelling mistakes (pay extreme care to ண/ன/ந, ல/ள/ழ, ர/ற).
+- Clean Tamil Unicode only; no broken combinations or detached diacritics.
+- Accurately preserve historical dates, act names, numbers, scientific units, and technical terminology.`
       : selectedLanguage && selectedLanguage !== "mixed"
         ? `You MUST output all questions, options, correct answers, and explanations in the "${selectedLanguage}" language.`
         : selectedLanguage === "mixed"
           ? `You MUST output all questions, options, correct answers, and explanations in the original mixed-language format of the study material.`
           : `You MUST detect the primary language of the provided study material and output the generated questions, options, correct answers, and explanations in the EXACT same language as the study material. For example, if the material is in Tamil, generate questions in Tamil. Never translate the content unless the user explicitly requests translation.`;
-
 
   const systemPrompt = `You are an expert exam question writer. Read the provided study material carefully and produce high-quality multiple choice questions.
 
@@ -100,14 +121,12 @@ ${sourceText}
     if (!key) {
       throw new Error("No Gemini API key provided. Please configure it in Settings or .env file.");
     }
-    // We can use the OpenAI compatible endpoint or standard Gemini endpoint.
-    // Standard Gemini stream endpoint is highly reliable. Let's use standard Gemini streaming.
-    const model = modelName || "gemini-3.1-flash-lite";
+    const model = modelName || "gemini-3.5-flash";
     url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?key=${key}`;
     body = {
       contents: [{ role: "user", parts: [{ text: `${systemPrompt}\n\n${prompt}` }] }],
       generationConfig: {
-        temperature: 0.7,
+        temperature: 0.3,
       },
     };
   } else if (effectiveProvider === "openai") {
@@ -124,7 +143,7 @@ ${sourceText}
         { role: "system", content: systemPrompt },
         { role: "user", content: prompt },
       ],
-      temperature: 0.7,
+      temperature: 0.3,
       stream: true,
     };
   } else if (effectiveProvider === "lovable") {
@@ -140,7 +159,7 @@ ${sourceText}
         { role: "system", content: systemPrompt },
         { role: "user", content: prompt },
       ],
-      temperature: 0.7,
+      temperature: 0.3,
       stream: true,
     };
   }
@@ -163,43 +182,34 @@ ${sourceText}
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-
   let textBuffer = "";
 
-  function* parseTextBuffer(newText: string): Generator<MCQ, void, unknown> {
-    textBuffer += newText;
+  const collectedRawMcqs: MCQ[] = [];
 
-    let newlineIdx;
-    while ((newlineIdx = textBuffer.indexOf("\n")) !== -1) {
-      const line = textBuffer.slice(0, newlineIdx).trim();
-      textBuffer = textBuffer.slice(newlineIdx + 1);
-
-      if (!line || line.startsWith("```")) {
-        continue;
+  function parseLine(line: string): MCQ | null {
+    if (!line || line.startsWith("```")) return null;
+    try {
+      const parsed = JSON.parse(line);
+      if (
+        parsed &&
+        typeof parsed.question === "string" &&
+        Array.isArray(parsed.options) &&
+        parsed.options.length === 4 &&
+        typeof parsed.correctAnswer === "string"
+      ) {
+        return {
+          question: parsed.question,
+          options: parsed.options,
+          correctAnswer: parsed.correctAnswer,
+          explanation: parsed.explanation || "",
+          difficulty: parsed.difficulty || "Medium",
+          category: parsed.category || "Concept",
+        };
       }
-
-      try {
-        const parsed = JSON.parse(line);
-        if (
-          parsed &&
-          typeof parsed.question === "string" &&
-          Array.isArray(parsed.options) &&
-          parsed.options.length === 4 &&
-          typeof parsed.correctAnswer === "string"
-        ) {
-          yield {
-            question: parsed.question,
-            options: parsed.options,
-            correctAnswer: parsed.correctAnswer,
-            explanation: parsed.explanation || "",
-            difficulty: parsed.difficulty || "Medium",
-            category: parsed.category || "Concept",
-          };
-        }
-      } catch (e) {
-        // Ignore partial JSON parse errors
-      }
+    } catch {
+      // Ignore partial lines
     }
+    return null;
   }
 
   try {
@@ -210,12 +220,10 @@ ${sourceText}
       const newText = decoder.decode(value, { stream: true });
 
       if (effectiveProvider === "gemini") {
-        // Standard Gemini stream returns chunks of JSON array.
-        // We will accumulate buffer and extract all candidate texts.
         buffer += newText;
         let textSegments = "";
-
         let searchIndex = 0;
+
         while (true) {
           const startCandidate = buffer.indexOf('"candidates"', searchIndex);
           if (startCandidate === -1) break;
@@ -232,7 +240,6 @@ ${sourceText}
             continue;
           }
 
-          // Find the matching unescaped ending quote
           let quoteEnd = quoteStart + 1;
           let found = false;
           while (quoteEnd < buffer.length) {
@@ -243,25 +250,35 @@ ${sourceText}
             quoteEnd++;
           }
 
-          if (!found) {
-            break;
-          }
+          if (!found) break;
 
           const escapedText = buffer.slice(quoteStart + 1, quoteEnd);
           try {
             const unescapedText = JSON.parse(`"${escapedText}"`);
             textSegments += unescapedText;
-          } catch (err) {}
+          } catch {}
 
           buffer = buffer.slice(quoteEnd + 1);
           searchIndex = 0;
         }
 
         if (textSegments) {
-          yield* parseTextBuffer(textSegments);
+          textBuffer += textSegments;
+          let newlineIdx;
+          while ((newlineIdx = textBuffer.indexOf("\n")) !== -1) {
+            const line = textBuffer.slice(0, newlineIdx).trim();
+            textBuffer = textBuffer.slice(newlineIdx + 1);
+            const mcq = parseLine(line);
+            if (mcq) {
+              if (isTamil) {
+                collectedRawMcqs.push(mcq);
+              } else {
+                yield mcq;
+              }
+            }
+          }
         }
       } else {
-        // OpenAI / Lovable stream using standard Server-Sent Events (SSE).
         buffer += newText;
         let lineEnd;
         while ((lineEnd = buffer.indexOf("\n")) !== -1) {
@@ -276,55 +293,64 @@ ${sourceText}
               const dataObj = JSON.parse(dataStr);
               const content = dataObj.choices?.[0]?.delta?.content || "";
               if (content) {
-                yield* parseTextBuffer(content);
+                textBuffer += content;
+                let nlIdx;
+                while ((nlIdx = textBuffer.indexOf("\n")) !== -1) {
+                  const subLine = textBuffer.slice(0, nlIdx).trim();
+                  textBuffer = textBuffer.slice(nlIdx + 1);
+                  const mcq = parseLine(subLine);
+                  if (mcq) {
+                    if (isTamil) {
+                      collectedRawMcqs.push(mcq);
+                    } else {
+                      yield mcq;
+                    }
+                  }
+                }
               }
-            } catch (e) {
-              // Ignore partial JSON parse errors
-            }
+            } catch {}
           }
         }
       }
     }
 
-    // Process any remaining text in buffer
-    if (buffer && effectiveProvider !== "gemini") {
-      if (buffer.startsWith("data: ")) {
-        const dataStr = buffer.slice(6).trim();
-        if (dataStr !== "[DONE]") {
-          try {
-            const dataObj = JSON.parse(dataStr);
-            const content = dataObj.choices?.[0]?.delta?.content || "";
-            if (content) {
-              yield* parseTextBuffer(content);
-            }
-          } catch (e) {}
+    // Process leftover textBuffer
+    const finalLine = textBuffer.trim();
+    if (finalLine) {
+      const mcq = parseLine(finalLine);
+      if (mcq) {
+        if (isTamil) {
+          collectedRawMcqs.push(mcq);
+        } else {
+          yield mcq;
         }
       }
     }
 
-    // Process any remaining text in textBuffer
-    const finalLine = textBuffer.trim();
-    if (finalLine && !finalLine.startsWith("```")) {
-      try {
-        const parsed = JSON.parse(finalLine);
-        if (
-          parsed &&
-          typeof parsed.question === "string" &&
-          Array.isArray(parsed.options) &&
-          parsed.options.length === 4 &&
-          typeof parsed.correctAnswer === "string"
-        ) {
-          yield {
-            question: parsed.question,
-            options: parsed.options,
-            correctAnswer: parsed.correctAnswer,
-            explanation: parsed.explanation || "",
-            difficulty: parsed.difficulty || "Medium",
-            category: parsed.category || "Concept",
-          };
-        }
-      } catch (e) {
-        // Ignore
+    // For Tamil questions, execute the second validation and correction pass via TamilLlama 3.0
+    if (isTamil && collectedRawMcqs.length > 0) {
+      console.log(
+        `[TamilLlama 3.0] Running second validation/correction pass on ${collectedRawMcqs.length} Tamil questions...`,
+      );
+
+      const validationRes = await validateAndRefineTamilMCQs(collectedRawMcqs, sourceText, env, {
+        config: {
+          apiUrl: tamilLlamaUrl,
+          apiKey: tamilLlamaKey,
+          modelName: tamilLlamaModel,
+        },
+        fallbackAiOptions: {
+          apiKey,
+          apiProvider,
+          modelName,
+          serverGeminiKey,
+          serverOpenAIKey,
+        },
+      });
+
+      const validatedList = validationRes.data;
+      for (const vMcq of validatedList) {
+        yield vMcq;
       }
     }
   } finally {
