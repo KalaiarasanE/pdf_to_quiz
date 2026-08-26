@@ -8,20 +8,22 @@ export interface DetectResult {
 }
 
 export async function detectLanguage(text: string, env: any): Promise<DetectResult> {
-  // 1. Run local regex validation for legacy Tamil fonts
+  // 1. First, check standard Tamil Unicode presence. If standard Tamil Unicode is already present,
+  // it is definitively Unicode Tamil and NOT a legacy font!
+  const hasTamilUnicode = /[\u0B80-\u0BFF]/.test(text);
+
+  // 2. Run local regex validation for legacy Tamil fonts ONLY if no standard Tamil Unicode is present
   const words = text.split(/\s+/);
   let legacyWordCount = 0;
-  // Common legacy patterns:
-  // - Semicolons inside/end of word: d;, y;, w;, f;, u;, n;, k;, t; (represent ன், ல், ற், க், ர், ண், த், ட் etc. in Bamini/others)
-  // - Specific substrings: thz, Fw;, ghj;, xypia, Kjd;
-  const legacyRegex = /([a-zA-Z]+;[a-zA-Z]*)|(thz|Fw;|ghj;|xypia|Kjd;|Kjypy;|xyp|tpah|ghu;)/;
+  // Specific legacy font substrings (Bamini, TAB, TAM) where letters + semicolons denote consonants
+  const legacyRegex = /\b(?:[a-zA-Z]{1,3};[a-zA-Z]*|thz|Fw;|ghj;|xypia|Kjd;|Kjypy;|xyp|tpah|ghu;)\b/;
   for (const word of words) {
     if (legacyRegex.test(word)) {
       legacyWordCount++;
     }
   }
   const legacyPercentage = words.length > 0 ? (legacyWordCount / words.length) * 100 : 0;
-  const hasLegacyTamil = legacyPercentage > 5;
+  const hasLegacyTamil = !hasTamilUnicode && legacyPercentage > 8;
 
   if (hasLegacyTamil) {
     // If it contains more than 5% legacy Tamil patterns, we know it's legacy Tamil!
@@ -43,8 +45,7 @@ export async function detectLanguage(text: string, env: any): Promise<DetectResu
     };
   }
 
-  // 2. Otherwise, check standard Tamil Unicode presence
-  const hasTamilUnicode = /[\u0B80-\u0BFF]/.test(text);
+  // 3. Otherwise, check primary language
 
   const apiKey =
     (env && typeof env === "object" && (env as any).GEMINI_API_KEY) || process.env.GEMINI_API_KEY;

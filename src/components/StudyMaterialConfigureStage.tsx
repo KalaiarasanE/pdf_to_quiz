@@ -28,9 +28,9 @@ import {
 import { toast } from "sonner";
 import {
   StudyMaterialData,
-  StudyMaterialChapter,
   StudyMaterialStreamProgress,
 } from "@/lib/study-material.types";
+import { reconstructPdfText, logTamilStage } from "@/lib/tamil-pipeline";
 
 interface StudyMaterialConfigureProps {
   pdf: {
@@ -142,7 +142,7 @@ export function StudyMaterialConfigureStage({
                   try {
                     const page = await doc.getPage(pageNum);
                     const content = await page.getTextContent();
-                    const pageText = content.items.map((it: any) => it.str ?? "").join(" ");
+                    const pageText = reconstructPdfText(content);
                     results[p] = { pageNum, text: pageText };
                   } catch (e) {
                     console.error(`Error reading page ${pageNum}`, e);

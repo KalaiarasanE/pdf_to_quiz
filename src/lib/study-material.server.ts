@@ -190,9 +190,10 @@ export async function* generateStudyMaterialStream(
 1. Pure, grammatically sound Tamil sentence structure (Subject-Object-Verb natural phrasing; NEVER awkward literal word-by-word machine translations).
 2. Zero spelling mistakes. Pay extreme care to consonant variants: ண/ன/ந, ல/ள/ழ, ர/ற.
 3. Clean Tamil Unicode only. All consonant-vowel combinations (ங, ஞ, ட, ண, த, ந, ப, ம, ய, ர, ல, வ, ழ, ள, ற, ன) must be uncorrupted and properly combined without broken diacritics.
-4. Use standard Tamil academic and exam vocabulary (முன்னுரை, அடிப்படைக் கோட்பாடுகள், முக்கிய குறிப்புகள், தேர்வு முக்கிய கருத்துக்கள், விரைவு திருப்புதல், வரையறைகள்).
-5. Accurately preserve technical names, constitutional articles, statutory acts, scientific formulas, historical dates, and percentages without corruption or hallucination.
-6. Do not duplicate sections or repeat paragraphs.`
+4. STRICT SYMBOL CLEANLINESS: NEVER use '+' as a connective, bullet point, or separator between Tamil words (e.g. NEVER output 'தமிழ்நாடு + புவியியல்' or 'உணவு + ...'). Use natural Tamil connectives ('மற்றும்', 'ஆகியவை', அல்லது '-') or full phrases ('தமிழ்நாட்டின் புவியியல்', 'உணவும் ஊட்டச்சத்தும்'). NEVER output double colons '::' or OCR noise. Only use '+' in explicit mathematical equations (2 + 2 = 4) or grammar Sandhi rules (நிலைமொழி + வருமொழி = புணர்மொழி).
+5. Use standard Tamil academic and exam vocabulary (முன்னுரை, அடிப்படைக் கோட்பாடுகள், முக்கிய குறிப்புகள், தேர்வு முக்கிய கருத்துக்கள், விரைவு திருப்புதல், வரையறைகள்).
+6. Accurately preserve technical names, constitutional articles, statutory acts, scientific formulas, historical dates, and percentages without corruption or hallucination.
+7. Do not duplicate sections or repeat paragraphs.`
       : selectedLanguage && selectedLanguage !== "mixed"
       ? `You MUST write the entire study material in "${selectedLanguage}" language.`
       : `You MUST detect the primary language of the uploaded document (e.g., Tamil, English, Hindi, Telugu, etc.) and write the entire study material in the EXACT same language as the uploaded document. For example, if the document is in Tamil, output proper Tamil Unicode. Never translate unless the user explicitly requests translation. Use proper Unicode without corrupted characters.`;

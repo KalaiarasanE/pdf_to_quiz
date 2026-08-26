@@ -638,3 +638,32 @@
   }
 }
 
+/* Print styling for Study Material Document */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #study-material-document-content,
+  #study-material-document-content * {
+    visibility: visible;
+  }
+  #study-material-document-content {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 20px !important;
+    box-shadow: none !important;
+    border: none !important;
+    background: white !important;
+    color: black !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  .pdf-block {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+}
+

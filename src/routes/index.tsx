@@ -67,6 +67,12 @@ import { generateStudyMaterialPdf, generateStudyMaterialWord } from "@/lib/study
 
 import html2canvas from "html2canvas";
 import Strands from "@/components/Strands";
+import {
+  reconstructPdfText,
+  normalizeTamilUnicode,
+  cleanUnwantedTamilSymbols,
+  logTamilStage,
+} from "@/lib/tamil-pipeline";
 
 // Import export libraries
 import { jsPDF } from "jspdf";
@@ -139,7 +145,7 @@ type PdfMeta = {
 // Helper utility functions for clean document formatting
 const cleanQuestionText = (raw: string) => {
   if (!raw) return "";
-  let text = raw.trim();
+  let text = cleanUnwantedTamilSymbols(normalizeTamilUnicode(raw.trim()));
   text = text.replace(/^(?:Q|Question|Q\s*No)?\s*\d*\s*[-.:)]\s*/i, "").trim();
   text = text.replace(/^Q\d+\s*/i, "").trim();
   return text;
@@ -147,7 +153,8 @@ const cleanQuestionText = (raw: string) => {
 
 const cleanOptionText = (opt: string) => {
   if (!opt) return "";
-  return opt.trim().replace(/^[A-D][\.\)\:\-]\s*/i, "").trim();
+  const cleaned = cleanUnwantedTamilSymbols(normalizeTamilUnicode(opt.trim()));
+  return cleaned.replace(/^[A-D][\.\)\:\-]\s*/i, "").trim();
 };
 
 const getAnswerLetter = (correctAnswer: string, options: string[]) => {
@@ -720,7 +727,11 @@ async function extractPdfSample(
     try {
       const page = await doc.getPage(i);
       const content = await page.getTextContent();
-      const pageText = content.items.map((it: any) => it.str ?? "").join(" ");
+      const rawText = content.items.map((it: any) => it.str ?? "").join(" ");
+      logTamilStage("A", `Raw PDF Extracted Text (Sample Page ${i})`, rawText);
+
+      const pageText = reconstructPdfText(content);
+      logTamilStage("B", `Unicode-Normalized Text (Sample Page ${i})`, pageText);
       sampleText += pageText + "\n";
     } catch (e) {
       console.error("Error reading sample page:", e);
@@ -731,7 +742,7 @@ async function extractPdfSample(
   return { sampleText, pagesCount, isScanned };
 }
 
-// Fast page text extraction using parallel chunked promises
+// Fast page text extraction using parallel chunked promises and layout-aware reconstruction
 async function getPDFPagesTextFast(
   doc: any,
   onProgress: (current: number, total: number) => void,
@@ -750,7 +761,7 @@ async function getPDFPagesTextFast(
           try {
             const page = await doc.getPage(pageNum);
             const content = await page.getTextContent();
-            const pageText = content.items.map((it: any) => it.str ?? "").join(" ");
+            const pageText = reconstructPdfText(content);
             results[p] = { pageNum, text: pageText };
           } catch (e) {
             console.error(`Error reading page ${pageNum}`, e);
@@ -1395,6 +1406,11 @@ function App() {
         }
       } catch (err) {
         console.error("Language detection failed", err);
+      }
+
+      if (hasLegacyTamil && /[\u0B80-\u0BFF]/.test(sampleText)) {
+        hasLegacyTamil = false;
+        fontEncoding = "Unicode";
       }
 
       if (hasLegacyTamil) {
@@ -2909,6 +2925,11 @@ function UploadStage({
           console.error("Language detection failed", err);
         }
 
+        if (hasLegacyTamil && /[\u0B80-\u0BFF]/.test(sampleText)) {
+          hasLegacyTamil = false;
+          fontEncoding = "Unicode";
+        }
+
         if (hasLegacyTamil) {
           setStageName(`Converting Tamil sample...`);
           setProgress(90);
@@ -3553,7 +3574,11 @@ function ConfigureStage({
           for (const word of words) {
             if (legacyRegex.test(word)) legacyWordCount++;
           }
-          const batchLegacyPct = words.length > 0 ? (legacyWordCount / words.length) * 100 : 0;
+          let batchLegacyPct = words.length > 0 ? (legacyWordCount / words.length) * 100 : 0;
+          if (/[\u0B80-\u0BFF]/.test(batchText)) {
+            // Already standard Tamil Unicode - do NOT run legacy conversion!
+            batchLegacyPct = 0;
+          }
 
           if (batchLegacyPct > 5) {
             addLog(

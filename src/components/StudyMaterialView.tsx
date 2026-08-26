@@ -37,7 +37,11 @@ import {
   isArtificialSubtitle,
 } from "@/lib/study-material.types";
 import { StudyMaterialDocument } from "@/components/StudyMaterialDocument";
-import { generateStudyMaterialPdf, generateStudyMaterialWord } from "@/lib/study-material.pdf";
+import {
+  generateStudyMaterialPdf,
+  generateStudyMaterialWord,
+  printStudyMaterialDocument,
+} from "@/lib/study-material.pdf";
 
 interface StudyMaterialViewProps {
   material: StudyMaterialData;
@@ -219,14 +223,27 @@ export function StudyMaterialView({
             <span className="hidden sm:inline">DOCX</span>
           </Button>
 
-          {/* Download Study Material PDF (Primary) */}
+          {/* Download Study Material PDF (Primary Real Text) */}
           <Button
             onClick={handleDownloadPdf}
             disabled={downloadingPdf}
-            className="bg-primary hover:bg-primary/90 text-white font-bold shadow-[0_0_20px_rgba(26,64,255,0.4)] gap-2 h-10 px-5 rounded-full text-xs md:text-sm"
+            className="bg-primary hover:bg-primary/90 text-white font-bold shadow-[0_0_20px_rgba(26,64,255,0.4)] gap-2 h-10 px-4 rounded-full text-xs md:text-sm"
+            title="Download real selectable text PDF with embedded font"
           >
             <Download className="h-4 w-4" />
-            <span>Download Study Material</span>
+            <span>Download PDF</span>
+          </Button>
+
+          {/* Browser Native Print / PDF Preview */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={printStudyMaterialDocument}
+            className="gap-1.5 h-10 rounded-full text-xs px-3.5"
+            title="Open browser print preview (100% styled vector PDF)"
+          >
+            <Printer className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Print / Browser PDF</span>
           </Button>
 
           {/* Fullscreen view toggle */}

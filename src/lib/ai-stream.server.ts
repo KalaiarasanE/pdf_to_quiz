@@ -72,6 +72,7 @@ export async function* generateMCQStream(config: StreamConfig): AsyncGenerator<M
 - Distractors must be plausible, meaningful, and of comparable length to the correct answer.
 - Zero spelling mistakes (pay extreme care to ண/ன/ந, ல/ள/ழ, ர/ற).
 - Clean Tamil Unicode only; no broken combinations or detached diacritics.
+- STRICT SYMBOL RULE: NEVER use '+' as a connective between Tamil words (e.g. NEVER output 'தமிழ்நாடு + புவியியல்' or 'உணவு + ...'). Use natural Tamil syntax. NEVER output double colons '::'. Only use '+' if writing a mathematical formula or explicit grammar equation.
 - Accurately preserve historical dates, act names, numbers, scientific units, and technical terminology.`
       : selectedLanguage && selectedLanguage !== "mixed"
         ? `You MUST output all questions, options, correct answers, and explanations in the "${selectedLanguage}" language.`

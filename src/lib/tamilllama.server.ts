@@ -1,5 +1,13 @@
 import { StudyMaterialData, StudyMaterialChapter } from "./study-material.types";
 import { MCQ } from "./ai-stream.server";
+import {
+  normalizeTamilUnicode,
+  cleanUnwantedTamilSymbols,
+  logTamilStage,
+  isTamilText,
+} from "./tamil-pipeline";
+
+export { isTamilText };
 
 export interface TamilLlamaConfig {
   apiUrl?: string;
@@ -51,14 +59,6 @@ export function getTamilLlamaConfig(config?: TamilLlamaConfig, env?: any): {
 }
 
 /**
- * Checks if a string contains Tamil Unicode characters.
- */
-export function isTamilText(text: string): boolean {
-  if (!text) return false;
-  return /[\u0B80-\u0BFF]/.test(text);
-}
-
-/**
  * Cleans raw PDF extracted text by stripping:
  * - headers/footers
  * - page numbers (e.g. Page 1 of 20, [PAGE 1 OF 20])
@@ -66,13 +66,16 @@ export function isTamilText(text: string): boolean {
  * - advertisements and website links
  * - unrelated instructions and navigation text
  * - duplicate content
- * - OCR noise
+ * - OCR noise & unwanted symbols (+, ::)
  * - irrelevant metadata
  */
 export function cleanPdfExtractedText(rawText: string): string {
   if (!rawText) return "";
 
-  const lines = rawText.split(/\r?\n/);
+  // 1. Normalize Unicode and clean OCR symbols
+  const normalizedText = cleanUnwantedTamilSymbols(normalizeTamilUnicode(rawText));
+
+  const lines = normalizedText.split(/\r?\n/);
   const cleanedLines: string[] = [];
   const seenLines = new Set<string>();
 
@@ -112,7 +115,7 @@ export function cleanPdfExtractedText(rawText: string): string {
       continue;
     }
 
-    // Check for OCR noise lines (e.g. random single punctuation or non-Tamil/non-Latin symbols)
+    // Check for OCR noise lines
     if (trimmed.length < 3 && !/^[0-9A-Za-z\u0B80-\u0BFF]/.test(trimmed)) {
       continue;
     }
@@ -129,7 +132,8 @@ export function cleanPdfExtractedText(rawText: string): string {
     cleanedLines.push(trimmed);
   }
 
-  return cleanedLines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  const result = cleanedLines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  return cleanUnwantedTamilSymbols(result);
 }
 
 /**
@@ -153,16 +157,22 @@ CRITICAL LINGUISTIC & GRAMMAR RULES:
    - Avoid broken Unicode characters, orphaned virama (்), or detached vowel signs (ெ, ே, ை, ொ, ோ, ௌ).
    - Ensure all Tamil glyph combinations (ங, ஞ, ட, ண, த, ந, ப, ம, ய, ர, ல, வ, ழ, ள, ற, ன) render cleanly.
 
-3. VOCABULARY & TECHNICAL TERMS:
+3. STRICT RULE ON SYMBOLS & CONNECTIVES (+, ::):
+   - NEVER use '+' as a connective, bullet point, or separator between Tamil words (e.g. NEVER output 'தமிழ்நாடு + புவியியல்' or 'உணவு + ...').
+   - Use natural Tamil connectives ('மற்றும்', 'ஆகியவை', அல்லது '-') or full phrases ('தமிழ்நாட்டின் புவியியல்', 'உணவும் ஊட்டச்சத்தும்').
+   - NEVER output double colons '::' or OCR noise symbols. Use standard punctuation (colon ':' or dash '-').
+   - Only output '+' if explicitly writing a mathematical formula (e.g. 2 + 2 = 4) or grammatical Sandhi rule (e.g. நிலைமொழி + வருமொழி = புணர்மொழி).
+
+4. VOCABULARY & TECHNICAL TERMS:
    - Use standard Tamil educational terms whenever available (e.g., 'முன்னுரை', 'வரையறை', 'முக்கிய அம்சங்கள்', 'விளக்கம்', 'தேர்வு குறிப்புகள்').
    - Accurately preserve technical terms, constitutional articles (e.g., 'சரத்து 32'), legal acts, scientific laws, dates, years, percentages, and formulas.
    - Do NOT translate proper nouns (names of people, historical places, specific treaties) into arbitrary or misleading Tamil words. Transliterate proper names accurately if necessary (e.g., 'அம்பேத்கர்', 'மவுண்ட்பேட்டன்').
 
-4. FACTUAL PRESERVATION:
+5. FACTUAL PRESERVATION:
    - Maintain 100% of original source meaning and factual data without hallucinating new facts.
    - Do NOT duplicate content or append redundant sentences.
 
-5. OUTPUT FORMAT:
+6. OUTPUT FORMAT:
    - Return valid, unescaped, clean JSON matching the requested schema. No markdown formatting (\`\`\`json), no introductory notes.`;
 
 /**
@@ -184,6 +194,9 @@ export async function callTamilLlama(params: {
 }): Promise<{ text: string; usedTamilLlamaNative: boolean; warning?: string }> {
   const { systemPrompt, prompt, config, env, fallbackAiOptions } = params;
   const tConfig = getTamilLlamaConfig(config, env);
+
+  // Diagnostic Log Stage C: Input sent to TamilLlama
+  logTamilStage("C", "Text Sent to TamilLlama", prompt);
 
   // 1. First attempt: Dedicated TamilLlama 3.0 Endpoint (Ollama / OpenAI-compatible / Cloud)
   if (tConfig.apiUrl) {
@@ -238,6 +251,7 @@ export async function callTamilLlama(params: {
 
         if (outputText && outputText.trim().length > 0) {
           console.log(`[TamilLlama 3.0] Native call succeeded (${outputText.length} chars).`);
+          logTamilStage("D", "TamilLlama Response", outputText);
           return {
             text: outputText.trim(),
             usedTamilLlamaNative: true,
@@ -289,6 +303,7 @@ export async function callTamilLlama(params: {
 
     const data = await res.json();
     const fallbackText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    logTamilStage("D", "TamilLlama (Fallback) Response", fallbackText);
     return {
       text: fallbackText.trim(),
       usedTamilLlamaNative: false,
@@ -300,9 +315,31 @@ export async function callTamilLlama(params: {
 }
 
 /**
+ * Recursively cleans and normalizes all string fields in an object:
+ * - Applies Unicode NFC normalization
+ * - Cleans unwanted '+' and '::' characters
+ */
+function sanitizeTamilObject<T>(obj: T): T {
+  if (typeof obj === "string") {
+    return cleanUnwantedTamilSymbols(normalizeTamilUnicode(obj)) as unknown as T;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map((item) => sanitizeTamilObject(item)) as unknown as T;
+  }
+  if (obj && typeof obj === "object") {
+    const cleaned: Record<string, any> = {};
+    for (const [key, val] of Object.entries(obj)) {
+      cleaned[key] = sanitizeTamilObject(val);
+    }
+    return cleaned as unknown as T;
+  }
+  return obj;
+}
+
+/**
  * Validates and refines generated Tamil Study Material through TamilLlama 3.0.
  * Checks spelling, grammar, sentence structure, punctuation, Unicode correctness,
- * and factual consistency. Corrects detected issues before website preview and PDF export.
+ * and factual consistency. Eliminates unwanted '+' and '::'.
  */
 export async function validateAndRefineTamilStudyMaterial(
   material: StudyMaterialData,
@@ -312,7 +349,6 @@ export async function validateAndRefineTamilStudyMaterial(
     fallbackAiOptions?: any;
   }
 ): Promise<TamilValidationResult<StudyMaterialData>> {
-  // If material has no Tamil content, return as-is
   const hasTamil =
     isTamilText(material.title) ||
     material.chapters.some(
@@ -321,7 +357,7 @@ export async function validateAndRefineTamilStudyMaterial(
 
   if (!hasTamil && material.language !== "Tamil") {
     return {
-      data: material,
+      data: sanitizeTamilObject(material),
       refinedWithTamilLlama: false,
     };
   }
@@ -332,7 +368,6 @@ export async function validateAndRefineTamilStudyMaterial(
   let usedTamilLlamaOverall = false;
   const warnings: string[] = [];
 
-  // Process chapters to validate Tamil grammar and spelling
   for (let i = 0; i < material.chapters.length; i++) {
     const ch = material.chapters[i];
 
@@ -341,9 +376,10 @@ Check and correct:
 1. Tamil spelling errors (ண/ன, ல/ள/ழ, ர/ற, ந/ந/ண).
 2. Grammar and natural sentence flow (TNPSC and educational Tamil standard).
 3. Unicode correctness (no broken ligatures, no detached kombu or virama).
-4. Factual preservation (do NOT change facts, dates, names, formulas, or numbers).
-5. Technical and exam terms (ensure accurate Tamil terminology).
-6. Do NOT duplicate content or create repetitive sections.
+4. CRITICAL: NEVER output '+' between Tamil words (e.g. fix 'தமிழ்நாடு + புவியியல்' to 'தமிழ்நாடு - புவியியல்' or 'தமிழ்நாட்டின் புவியியல்'). Fix any double colons '::'.
+5. Factual preservation (do NOT change facts, dates, names, formulas, or numbers).
+6. Technical and exam terms (ensure accurate Tamil terminology).
+7. Do NOT duplicate content or create repetitive sections.
 
 INPUT CHAPTER JSON:
 ${JSON.stringify(ch, null, 2)}
@@ -367,24 +403,25 @@ Return ONLY the corrected chapter JSON matching the exact same structure without
       const parsedChapter = JSON.parse(cleanJson);
 
       if (parsedChapter && parsedChapter.chapterTitle && Array.isArray(parsedChapter.sections)) {
+        const sanitized = sanitizeTamilObject(parsedChapter);
         refinedChapters.push({
-          ...parsedChapter,
+          ...sanitized,
           chapterNumber: ch.chapterNumber,
           sourcePages: ch.sourcePages,
         });
       } else {
-        refinedChapters.push(ch);
+        refinedChapters.push(sanitizeTamilObject(ch));
       }
     } catch (err) {
-      console.warn(`[TamilLlama 3.0] Chapter ${ch.chapterNumber} validation failed, preserving original:`, err);
-      refinedChapters.push(ch);
+      console.warn(`[TamilLlama 3.0] Chapter ${ch.chapterNumber} validation fallback:`, err);
+      refinedChapters.push(sanitizeTamilObject(ch));
     }
   }
 
-  // Also validate document title if needed
+  // Validate and sanitize document title
   let refinedTitle = material.title;
   try {
-    const titlePrompt = `Correct any spelling or grammar issues in this Tamil educational document title. Keep it concise, authoritative, and standard Tamil. Return ONLY the title text: "${material.title}"`;
+    const titlePrompt = `Correct any spelling, grammar, or symbol issues (+, ::) in this Tamil educational document title. Keep it concise, authoritative, and standard Tamil. Return ONLY the title text: "${material.title}"`;
     const { text } = await callTamilLlama({
       systemPrompt: TAMILLLAMA_SYSTEM_PROMPT,
       prompt: titlePrompt,
@@ -395,18 +432,20 @@ Return ONLY the corrected chapter JSON matching the exact same structure without
     if (text && text.trim().length > 0 && text.length < 150) {
       refinedTitle = text.replace(/^["']|["']$/g, "").trim();
     }
-  } catch {
-    // Keep original
-  }
+  } catch {}
 
-  const refinedMaterial: StudyMaterialData = {
+  const finalValidatedMaterial: StudyMaterialData = sanitizeTamilObject({
     ...material,
-    title: refinedTitle,
+    title: cleanUnwantedTamilSymbols(normalizeTamilUnicode(refinedTitle)),
     chapters: refinedChapters,
-  };
+  });
+
+  // Diagnostic Log Stage E: Final validated content
+  const previewSummary = `Title: ${finalValidatedMaterial.title} | Chapters: ${finalValidatedMaterial.chapters.length} | Chapter 1: ${finalValidatedMaterial.chapters[0]?.chapterTitle}`;
+  logTamilStage("E", "Final Validated Study Material Content", previewSummary);
 
   return {
-    data: refinedMaterial,
+    data: finalValidatedMaterial,
     refinedWithTamilLlama: usedTamilLlamaOverall,
     warnings: warnings.length > 0 ? warnings : undefined,
   };
@@ -415,7 +454,7 @@ Return ONLY the corrected chapter JSON matching the exact same structure without
 /**
  * Validates and refines generated Tamil MCQs through TamilLlama 3.0.
  * Checks questions, options, single correct answer validity, distractor quality,
- * and explanations.
+ * and explanations. Eliminates unwanted '+' and '::'.
  */
 export async function validateAndRefineTamilMCQs(
   mcqs: MCQ[],
@@ -435,7 +474,7 @@ export async function validateAndRefineTamilMCQs(
   );
 
   if (!hasTamil) {
-    return { data: mcqs, refinedWithTamilLlama: false };
+    return { data: sanitizeTamilObject(mcqs), refinedWithTamilLlama: false };
   }
 
   console.log(`[TamilLlama 3.0] Initiating Tamil MCQ validation pipeline for ${mcqs.length} questions...`);
@@ -447,8 +486,9 @@ VALIDATION TASKS:
 2. Verify that all 4 options are grammatically correct, plausible, and distinct.
 3. CRITICAL: Verify that exactly ONE option is the correct answer and that "correctAnswer" matches one of the 4 options EXACTLY.
 4. Correct all spelling mistakes (ண/ன, ல/ள/ழ, ர/ற) and broken Unicode characters.
-5. Ensure explanations are informative, concise, and written in standard academic Tamil.
-6. Preserve factual accuracy relative to the source material.
+5. REMOVE UNWANTED SYMBOLS: NEVER output '+' between Tamil words (e.g. 'தமிழ்நாடு + பு...' or 'உணவு + ...'). Use natural Tamil syntax. Remove '::'.
+6. Ensure explanations are informative, concise, and written in standard academic Tamil.
+7. Preserve factual accuracy relative to the source material.
 
 SOURCE MATERIAL CONTEXT:
 """
@@ -486,7 +526,6 @@ Return ONLY a valid JSON object matching this schema without any markdown format
     const parsed = JSON.parse(cleanJson);
 
     if (Array.isArray(parsed?.mcqs) && parsed.mcqs.length > 0) {
-      // Filter strictly to questions with 4 options and valid matching correctAnswer
       const validated = parsed.mcqs.filter((m: any) => {
         return (
           m.question &&
@@ -498,19 +537,23 @@ Return ONLY a valid JSON object matching this schema without any markdown format
       });
 
       if (validated.length > 0) {
+        const sanitizedList = sanitizeTamilObject(validated);
+        logTamilStage("E", "Final Validated MCQs Content", sanitizedList.map((m: any) => m.question).join(" | "));
         return {
-          data: validated,
+          data: sanitizedList,
           refinedWithTamilLlama: usedTamilLlamaNative,
           warnings: warning ? [warning] : undefined,
         };
       }
     }
   } catch (err) {
-    console.warn("[TamilLlama 3.0] MCQ validation pass encountered error, using original MCQs:", err);
+    console.warn("[TamilLlama 3.0] MCQ validation pass fallback:", err);
   }
 
+  const sanitizedOriginal = sanitizeTamilObject(mcqs);
+  logTamilStage("E", "Final Validated MCQs Content (Original Cleaned)", sanitizedOriginal.map((m) => m.question).join(" | "));
   return {
-    data: mcqs,
+    data: sanitizedOriginal,
     refinedWithTamilLlama: false,
     warnings: ["Tamil MCQ validation completed with source verification."],
   };

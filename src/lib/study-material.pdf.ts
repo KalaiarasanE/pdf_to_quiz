@@ -1,5 +1,4 @@
 import { jsPDF } from "jspdf";
-import html2canvas from "html2canvas";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
 import { saveAs } from "file-saver";
 import { toast } from "sonner";
@@ -9,10 +8,15 @@ import {
   cleanDocumentTitle,
   isArtificialSubtitle,
 } from "./study-material.types";
+import {
+  normalizeTamilUnicode,
+  cleanUnwantedTamilSymbols,
+  logTamilStage,
+  isTamilText,
+} from "./tamil-pipeline";
 
 export interface PdfExportOptions {
   elementId?: string;
-  domElement?: HTMLElement | null;
   onSuccess?: () => void;
   onError?: (err: any) => void;
 }
@@ -57,447 +61,505 @@ async function getEmbeddedTamilFont(): Promise<string | null> {
 }
 
 /**
- * High-fidelity, multi-page PDF generation for Study Material.
- * Uses the EXACT shared design system of the website preview, ensuring 100% visual
- * consistency across font, spacing, borders, cards, and Tamil Unicode rendering.
+ * High-fidelity, real vector-text PDF generation for Study Material using jsPDF.
+ * - Text is 100% real selectable, searchable, copyable Unicode text.
+ * - Embeds Noto Sans Tamil TrueType font directly in the PDF file.
+ * - Visually matches the website preview: cards, exam points (★), quick revision (→), tables, dates, definitions.
+ * - Uses block-aware pagination to prevent awkward cuts.
  */
 export async function generateStudyMaterialPdf(
   material: StudyMaterialData,
   options?: PdfExportOptions
 ): Promise<void> {
-  const toastId = toast.loading("Generating Study Material PDF...");
+  const toastId = toast.loading("Generating real text Study Material PDF...");
 
   try {
     const cleanChapters = filterEducationalChapters(material.chapters);
     const cleanTitle = cleanDocumentTitle(material.title, cleanChapters[0]?.chapterTitle);
 
-    // Locate the rendered preview DOM element
-    let targetEl: HTMLElement | null =
-      options?.domElement ||
-      (options?.elementId ? document.getElementById(options.elementId) : null) ||
-      document.getElementById("study-material-document-content");
+    // Diagnostic Log Stage F: Content passed to PDF renderer
+    logTamilStage(
+      "F",
+      "Content Passed to PDF Renderer",
+      `Title: ${cleanTitle} | Chapters: ${cleanChapters.length}`
+    );
 
-    let tempContainer: HTMLElement | null = null;
+    // Load embedded Tamil font
+    const base64Font = await getEmbeddedTamilFont();
 
-    // If no DOM element is currently mounted in view, render a temporary styled container
-    if (!targetEl) {
-      tempContainer = document.createElement("div");
-      tempContainer.style.position = "fixed";
-      tempContainer.style.left = "-9999px";
-      tempContainer.style.top = "0";
-      tempContainer.style.width = "820px"; // Standard A4 content container width
-      tempContainer.style.backgroundColor = "#ffffff";
-      tempContainer.style.zIndex = "-1000";
-      tempContainer.innerHTML = buildDocumentHtmlString(material, cleanTitle, cleanChapters);
-      document.body.appendChild(tempContainer);
-      targetEl = tempContainer;
-    }
-
-    // Capture the target DOM element at high DPI using html2canvas
-    const scale = 2.0; // 2x scale for crisp 192 DPI print-grade resolution
-    const canvas = await html2canvas(targetEl, {
-      scale,
-      useCORS: true,
-      allowTaint: true,
-      backgroundColor: "#ffffff",
-      logging: false,
-      windowWidth: 820,
-    });
-
-    if (tempContainer && tempContainer.parentNode) {
-      tempContainer.parentNode.removeChild(tempContainer);
-    }
-
-    // A4 dimensions in PDF points (72 pt per inch)
-    // A4 = 595.28 pt width x 841.89 pt height
-    const pdfPageWidth = 595.28;
-    const pdfPageHeight = 841.89;
-
-    const marginPt = 36; // 0.5 inch margins
-    const headerHeightPt = 32;
-    const footerHeightPt = 32;
-    const usableWidthPt = pdfPageWidth - marginPt * 2;
-    const usableHeightPt = pdfPageHeight - headerHeightPt - footerHeightPt;
-
-    // Convert PDF usable dimensions to canvas pixels
-    const canvasWidth = canvas.width;
-    const canvasHeight = canvas.height;
-    const pxPerPt = canvasWidth / usableWidthPt;
-    const pageSliceHeightPx = usableHeightPt * pxPerPt;
-
-    // Identify intelligent block-aware break points
-    const blockElements = targetEl.querySelectorAll(".pdf-block, .chapter-container");
-    const breakPositionsPx: number[] = [];
-    const rootTop = targetEl.getBoundingClientRect().top;
-
-    blockElements.forEach((el) => {
-      const rect = el.getBoundingClientRect();
-      const relativeTopPx = (rect.top - rootTop) * scale;
-      if (relativeTopPx > 20 && relativeTopPx < canvasHeight - 20) {
-        breakPositionsPx.push(relativeTopPx);
-      }
-    });
-
-    // Calculate slice boundaries
-    const pageSlices: { startY: number; endY: number }[] = [];
-    let currentY = 0;
-
-    while (currentY < canvasHeight) {
-      let targetEndY = currentY + pageSliceHeightPx;
-
-      if (targetEndY >= canvasHeight) {
-        pageSlices.push({ startY: currentY, endY: canvasHeight });
-        break;
-      }
-
-      // Find the best clean split point near targetEndY
-      // Prefer breaking before the closest block above targetEndY
-      const candidateBreak = breakPositionsPx
-        .filter((y) => y > currentY + pageSliceHeightPx * 0.4 && y <= targetEndY)
-        .pop();
-
-      if (candidateBreak && targetEndY - candidateBreak < pageSliceHeightPx * 0.35) {
-        targetEndY = candidateBreak;
-      }
-
-      pageSlices.push({ startY: currentY, endY: targetEndY });
-      currentY = targetEndY;
-    }
-
-    const totalPages = pageSlices.length;
-
-    // Initialize jsPDF document
     const doc = new jsPDF({
-      orientation: "portrait",
+      orientation: "p",
       unit: "pt",
       format: "a4",
       compress: true,
     });
 
-    // Embed Noto Sans Tamil into PDF VFS for Unicode text selection and headers
-    const base64TamilFont = await getEmbeddedTamilFont();
-    if (base64TamilFont) {
-      try {
-        doc.addFileToVFS("NotoSansTamil.ttf", base64TamilFont);
-        doc.addFont("NotoSansTamil.ttf", "NotoSansTamil", "normal");
-        doc.setFont("NotoSansTamil", "normal");
-      } catch (err) {
-        console.warn("Could not register Tamil font in jsPDF VFS:", err);
-      }
+    const fontName = base64Font ? "NotoSansTamil" : "helvetica";
+    if (base64Font) {
+      doc.addFileToVFS("NotoSansTamil.ttf", base64Font);
+      doc.addFont("NotoSansTamil.ttf", "NotoSansTamil", "normal");
+      doc.setFont("NotoSansTamil", "normal");
     }
 
-    const setDocFont = (bold: boolean = false) => {
-      if (base64TamilFont) {
-        doc.setFont("NotoSansTamil", "normal");
-      } else {
-        doc.setFont("helvetica", bold ? "bold" : "normal");
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const marginX = 42;
+    const marginY = 45;
+    const contentWidth = pageWidth - marginX * 2;
+    const footerHeight = 35;
+    const maxY = pageHeight - footerHeight;
+
+    let y = marginY;
+    let pageCount = 1;
+
+    const setTamilFont = (_bold: boolean = false) => {
+      doc.setFont(fontName, "normal");
+    };
+
+    const checkPageBreak = (neededHeight: number) => {
+      if (y + neededHeight > maxY) {
+        doc.addPage();
+        pageCount++;
+        y = marginY + 15;
+        // Draw top subtle running header on continuation pages
+        doc.setFontSize(8);
+        doc.setTextColor(148, 163, 184); // slate-400
+        setTamilFont(false);
+        const headerText = cleanTitle.length > 50 ? cleanTitle.slice(0, 48) + "..." : cleanTitle;
+        doc.text(headerText, marginX, marginY - 10);
+        doc.setDrawColor(226, 232, 240);
+        doc.setLineWidth(0.5);
+        doc.line(marginX, marginY - 5, pageWidth - marginX, marginY - 5);
       }
     };
 
-    // Render each page slice onto PDF
-    for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
-      if (pageIdx > 0) {
-        doc.addPage();
+    // ==========================================
+    // 1. DOCUMENT HEADER
+    // ==========================================
+    checkPageBreak(80);
+
+    // Main Document Title
+    doc.setFontSize(18);
+    doc.setTextColor(15, 23, 42); // slate-900
+    setTamilFont(true);
+    const titleLines = doc.splitTextToSize(cleanTitle, contentWidth);
+    doc.text(titleLines, marginX, y);
+    y += titleLines.length * 22;
+
+    // Subtitle if educational
+    if (material.subtitle && !isArtificialSubtitle(material.subtitle)) {
+      const cleanSub = cleanUnwantedTamilSymbols(normalizeTamilUnicode(material.subtitle));
+      doc.setFontSize(11);
+      doc.setTextColor(71, 85, 105); // slate-600
+      setTamilFont(false);
+      const subLines = doc.splitTextToSize(cleanSub, contentWidth);
+      doc.text(subLines, marginX, y);
+      y += subLines.length * 15;
+    }
+
+    y += 6;
+    // Indigo accent bar under document header
+    doc.setDrawColor(99, 102, 241); // indigo-500
+    doc.setLineWidth(2.5);
+    doc.line(marginX, y, marginX + contentWidth, y);
+    y += 24;
+
+    // ==========================================
+    // 2. CHAPTERS
+    // ==========================================
+    for (let cIdx = 0; cIdx < cleanChapters.length; cIdx++) {
+      const ch = cleanChapters[cIdx];
+      const cleanChTitle = cleanUnwantedTamilSymbols(normalizeTamilUnicode(ch.chapterTitle));
+      const cleanChSummary = ch.summary ? cleanUnwantedTamilSymbols(normalizeTamilUnicode(ch.summary)) : "";
+
+      // Chapter banner estimated height
+      const bannerTitleLines = doc.splitTextToSize(`Chapter ${ch.chapterNumber || cIdx + 1}: ${cleanChTitle}`, contentWidth - 40);
+      const summaryLines = cleanChSummary ? doc.splitTextToSize(cleanChSummary, contentWidth - 40) : [];
+      const bannerHeight = 24 + bannerTitleLines.length * 18 + (summaryLines.length ? summaryLines.length * 14 + 10 : 0);
+
+      checkPageBreak(bannerHeight + 30);
+
+      // Chapter Banner Box (gradient-style soft indigo with left border)
+      doc.setFillColor(238, 242, 255); // indigo-50
+      doc.roundedRect(marginX, y, contentWidth, bannerHeight, 6, 6, "F");
+
+      // Left Accent Border
+      doc.setFillColor(79, 70, 229); // indigo-600
+      doc.rect(marginX, y, 5, bannerHeight, "F");
+
+      let bannerInnerY = y + 18;
+
+      // Chapter Title Text
+      doc.setFontSize(13);
+      doc.setTextColor(49, 46, 129); // indigo-900
+      setTamilFont(true);
+      doc.text(bannerTitleLines, marginX + 16, bannerInnerY);
+      bannerInnerY += bannerTitleLines.length * 18;
+
+      // Summary Text
+      if (summaryLines.length > 0) {
+        doc.setFontSize(9.5);
+        doc.setTextColor(67, 56, 202); // indigo-700
+        setTamilFont(false);
+        doc.text(summaryLines, marginX + 16, bannerInnerY);
       }
 
-      const slice = pageSlices[pageIdx];
-      const sliceH = slice.endY - slice.startY;
+      y += bannerHeight + 16;
 
-      // Create a canvas slice
-      const pageCanvas = document.createElement("canvas");
-      pageCanvas.width = canvasWidth;
-      pageCanvas.height = sliceH;
-      const ctx = pageCanvas.getContext("2d");
+      // Chapter Sections
+      for (const sec of ch.sections || []) {
+        const cleanSecTitle = cleanUnwantedTamilSymbols(normalizeTamilUnicode(sec.title || ""));
+        const cleanContent = sec.content ? cleanUnwantedTamilSymbols(normalizeTamilUnicode(sec.content)) : "";
 
-      if (ctx) {
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, 0, canvasWidth, sliceH);
-        ctx.drawImage(
-          canvas,
-          0,
-          slice.startY,
-          canvasWidth,
-          sliceH,
-          0,
-          0,
-          canvasWidth,
-          sliceH
-        );
+        checkPageBreak(40);
+
+        // Section Title with indicator dot
+        doc.setFillColor(79, 70, 229); // indigo-600
+        doc.circle(marginX + 4, y - 4, 3, "F");
+
+        doc.setFontSize(12);
+        doc.setTextColor(30, 41, 59); // slate-800
+        setTamilFont(true);
+        const secTitleLines = doc.splitTextToSize(cleanSecTitle, contentWidth - 25);
+        doc.text(secTitleLines, marginX + 14, y);
+        y += secTitleLines.length * 16;
+
+        // Section Title Underline
+        doc.setDrawColor(241, 245, 249); // slate-100
+        doc.setLineWidth(1);
+        doc.line(marginX, y + 2, marginX + contentWidth, y + 2);
+        y += 10;
+
+        // Section Introduction Content
+        if (cleanContent) {
+          doc.setFontSize(10);
+          doc.setTextColor(51, 65, 85); // slate-700
+          setTamilFont(false);
+          const contentLines = doc.splitTextToSize(cleanContent, contentWidth - 18);
+          const blockH = contentLines.length * 15 + 8;
+          checkPageBreak(blockH);
+
+          // Left border line for quote-style paragraph
+          doc.setDrawColor(203, 213, 225); // slate-300
+          doc.setLineWidth(2);
+          doc.line(marginX + 2, y, marginX + 2, y + blockH - 6);
+
+          doc.text(contentLines, marginX + 12, y + 10);
+          y += blockH + 6;
+        }
+
+        // Exam Points (★ Amber Highlight Cards)
+        if (sec.type === "exam_points" && sec.items && sec.items.length > 0) {
+          for (const item of sec.items) {
+            const cleanItem = cleanUnwantedTamilSymbols(normalizeTamilUnicode(item));
+            doc.setFontSize(9.5);
+            doc.setTextColor(69, 26, 3); // amber-950
+            setTamilFont(false);
+            const itemLines = doc.splitTextToSize(cleanItem, contentWidth - 40);
+            const cardHeight = Math.max(26, itemLines.length * 14 + 14);
+
+            checkPageBreak(cardHeight + 6);
+
+            // Amber Card Background
+            doc.setFillColor(254, 243, 199); // amber-100
+            doc.setDrawColor(252, 211, 77); // amber-300
+            doc.setLineWidth(0.8);
+            doc.roundedRect(marginX, y, contentWidth, cardHeight, 5, 5, "FD");
+
+            // Star symbol
+            doc.setTextColor(217, 119, 6); // amber-600
+            doc.setFontSize(10);
+            doc.text("★", marginX + 10, y + 14);
+
+            // Item text
+            doc.setTextColor(69, 26, 3);
+            doc.setFontSize(9.5);
+            doc.text(itemLines, marginX + 26, y + 14);
+
+            y += cardHeight + 8;
+          }
+        }
+
+        // Quick Revision (Emerald Key → Value Pairs)
+        if (sec.type === "quick_revision" && sec.quickRevisionList && sec.quickRevisionList.length > 0) {
+          for (const qr of sec.quickRevisionList) {
+            const cleanKey = cleanUnwantedTamilSymbols(normalizeTamilUnicode(qr.key || ""));
+            const cleanVal = cleanUnwantedTamilSymbols(normalizeTamilUnicode(qr.value || ""));
+            const combinedText = `${cleanKey}  →  ${cleanVal}`;
+
+            doc.setFontSize(9.5);
+            setTamilFont(false);
+            const qrLines = doc.splitTextToSize(combinedText, contentWidth - 30);
+            const cardHeight = Math.max(24, qrLines.length * 14 + 12);
+
+            checkPageBreak(cardHeight + 6);
+
+            // Emerald Card
+            doc.setFillColor(236, 253, 245); // emerald-50
+            doc.setDrawColor(110, 231, 183); // emerald-300
+            doc.setLineWidth(0.8);
+            doc.roundedRect(marginX, y, contentWidth, cardHeight, 5, 5, "FD");
+
+            doc.setTextColor(6, 78, 59); // emerald-900
+            doc.text(qrLines, marginX + 12, y + 14);
+
+            y += cardHeight + 6;
+          }
+        }
+
+        // Key Facts
+        if (sec.type === "facts" && sec.keyFactList && sec.keyFactList.length > 0) {
+          for (const f of sec.keyFactList) {
+            const cleanLbl = cleanUnwantedTamilSymbols(normalizeTamilUnicode(f.label || ""));
+            const cleanV = cleanUnwantedTamilSymbols(normalizeTamilUnicode(f.value || ""));
+            const factText = `${cleanLbl}: ${cleanV}`;
+
+            doc.setFontSize(9.5);
+            setTamilFont(false);
+            const factLines = doc.splitTextToSize(factText, contentWidth - 30);
+            const cardH = Math.max(22, factLines.length * 14 + 10);
+
+            checkPageBreak(cardH + 4);
+
+            doc.setFillColor(248, 250, 252); // slate-50
+            doc.setDrawColor(226, 232, 240); // slate-200
+            doc.roundedRect(marginX, y, contentWidth, cardH, 4, 4, "FD");
+
+            doc.setFillColor(79, 70, 229);
+            doc.circle(marginX + 10, y + cardH / 2, 2.5, "F");
+
+            doc.setTextColor(15, 23, 42);
+            doc.text(factLines, marginX + 20, y + 13);
+            y += cardH + 5;
+          }
+        }
+
+        // Important Dates
+        if (sec.type === "dates" && sec.dateList && sec.dateList.length > 0) {
+          for (const d of sec.dateList) {
+            const cleanD = cleanUnwantedTamilSymbols(normalizeTamilUnicode(d.date || ""));
+            const cleanEvt = cleanUnwantedTamilSymbols(normalizeTamilUnicode(d.event || ""));
+            const dateFull = `[${cleanD}] ${cleanEvt}`;
+
+            doc.setFontSize(9.5);
+            setTamilFont(false);
+            const dLines = doc.splitTextToSize(dateFull, contentWidth - 30);
+            const cardH = Math.max(22, dLines.length * 14 + 10);
+
+            checkPageBreak(cardH + 4);
+
+            doc.setFillColor(240, 249, 255); // sky-50
+            doc.setDrawColor(186, 230, 253); // sky-200
+            doc.roundedRect(marginX, y, contentWidth, cardH, 4, 4, "FD");
+
+            doc.setTextColor(3, 105, 161); // sky-700
+            doc.text(dLines, marginX + 12, y + 13);
+            y += cardH + 5;
+          }
+        }
+
+        // Definitions
+        if (sec.type === "definitions" && sec.definitionList && sec.definitionList.length > 0) {
+          for (const def of sec.definitionList) {
+            const cleanTerm = cleanUnwantedTamilSymbols(normalizeTamilUnicode(def.term || ""));
+            const cleanDef = cleanUnwantedTamilSymbols(normalizeTamilUnicode(def.definition || ""));
+            const defText = `📌 ${cleanTerm}: ${cleanDef}`;
+
+            doc.setFontSize(9.5);
+            setTamilFont(false);
+            const defLines = doc.splitTextToSize(defText, contentWidth - 30);
+            const cardH = Math.max(24, defLines.length * 14 + 12);
+
+            checkPageBreak(cardH + 5);
+
+            doc.setFillColor(250, 245, 255); // purple-50
+            doc.setDrawColor(233, 213, 255); // purple-200
+            doc.roundedRect(marginX, y, contentWidth, cardH, 4, 4, "FD");
+
+            doc.setTextColor(88, 28, 135); // purple-900
+            doc.text(defLines, marginX + 12, y + 14);
+            y += cardH + 6;
+          }
+        }
+
+        // Structured Table
+        if (sec.tableData && sec.tableData.headers && sec.tableData.rows) {
+          const headers = sec.tableData.headers.map((h) => cleanUnwantedTamilSymbols(normalizeTamilUnicode(h)));
+          const rows = sec.tableData.rows.map((row) =>
+            row.map((cell) => cleanUnwantedTamilSymbols(normalizeTamilUnicode(cell)))
+          );
+
+          if (headers.length > 0 && rows.length > 0) {
+            const colWidth = contentWidth / headers.length;
+            const rowHeight = 22;
+
+            checkPageBreak(rowHeight * (rows.length + 1) + 15);
+
+            // Table Header Row
+            doc.setFillColor(238, 242, 255); // indigo-50
+            doc.setDrawColor(199, 210, 254); // indigo-200
+            doc.rect(marginX, y, contentWidth, rowHeight, "FD");
+
+            doc.setFontSize(9.5);
+            doc.setTextColor(49, 46, 129); // indigo-900
+            setTamilFont(true);
+            headers.forEach((h, colI) => {
+              doc.text(h, marginX + colI * colWidth + 6, y + 14);
+            });
+            y += rowHeight;
+
+            // Table Data Rows
+            doc.setFontSize(9);
+            setTamilFont(false);
+            rows.forEach((row, rI) => {
+              checkPageBreak(rowHeight + 4);
+              doc.setFillColor(rI % 2 === 0 ? 255 : 248, rI % 2 === 0 ? 255 : 250, rI % 2 === 0 ? 255 : 252);
+              doc.setDrawColor(226, 232, 240);
+              doc.rect(marginX, y, contentWidth, rowHeight, "FD");
+
+              doc.setTextColor(51, 65, 85);
+              row.forEach((cell, colI) => {
+                const cellText = cell.length > 35 ? cell.slice(0, 32) + "..." : cell;
+                doc.text(cellText, marginX + colI * colWidth + 6, y + 14);
+              });
+              y += rowHeight;
+            });
+            y += 8;
+          }
+        }
+
+        // Standard Bullet Points
+        if (sec.items && sec.type !== "exam_points" && sec.items.length > 0) {
+          for (const item of sec.items) {
+            const cleanBullet = cleanUnwantedTamilSymbols(normalizeTamilUnicode(item));
+            doc.setFontSize(9.5);
+            doc.setTextColor(30, 41, 59); // slate-800
+            setTamilFont(false);
+            const bLines = doc.splitTextToSize(cleanBullet, contentWidth - 25);
+            const bHeight = bLines.length * 15 + 4;
+
+            checkPageBreak(bHeight);
+
+            // Bullet dot
+            doc.setFillColor(79, 70, 229);
+            doc.circle(marginX + 6, y + 5, 2.5, "F");
+
+            doc.text(bLines, marginX + 16, y + 8);
+            y += bHeight;
+          }
+        }
+
+        y += 10;
       }
 
-      const imgData = pageCanvas.toDataURL("image/jpeg", 0.95);
-      const renderedHeightPt = sliceH / pxPerPt;
+      y += 14;
+    }
 
-      // Draw Header on secondary pages
-      if (pageIdx > 0) {
-        doc.setDrawColor(226, 232, 240); // slate-200
-        doc.setLineWidth(0.75);
-        doc.line(marginPt, 26, pdfPageWidth - marginPt, 26);
+    // ==========================================
+    // 3. FOOTERS ON ALL PAGES
+    // ==========================================
+    const totalPages = doc.getNumberOfPages();
+    for (let p = 1; p <= totalPages; p++) {
+      doc.setPage(p);
+      doc.setFontSize(8.5);
+      doc.setTextColor(148, 163, 184); // slate-400
+      setTamilFont(false);
 
-        setDocFont(false);
-        doc.setFontSize(8);
-        doc.setTextColor(148, 163, 184); // slate-400
-        doc.text(cleanTitle.slice(0, 55), marginPt, 20);
-        doc.text("Study Notes", pdfPageWidth - marginPt, 20, { align: "right" });
-      }
-
-      // Draw the pixel-perfect page canvas
-      const topY = pageIdx === 0 ? marginPt : headerHeightPt;
-      doc.addImage(
-        imgData,
-        "JPEG",
-        marginPt,
-        topY,
-        usableWidthPt,
-        renderedHeightPt,
-        undefined,
-        "FAST"
-      );
-
-      // Draw Footer & Page Numbering on all pages
+      // Separator line above footer
       doc.setDrawColor(226, 232, 240);
-      doc.setLineWidth(0.75);
-      doc.line(
-        marginPt,
-        pdfPageHeight - footerHeightPt + 10,
-        pdfPageWidth - marginPt,
-        pdfPageHeight - footerHeightPt + 10
-      );
+      doc.setLineWidth(0.5);
+      doc.line(marginX, pageHeight - footerHeight + 10, pageWidth - marginX, pageHeight - footerHeight + 10);
 
-      setDocFont(false);
-      doc.setFontSize(8);
-      doc.setTextColor(148, 163, 184);
+      // Page numbers centered
       doc.text(
-        `Page ${pageIdx + 1} of ${totalPages}`,
-        pdfPageWidth - marginPt,
-        pdfPageHeight - 14,
-        { align: "right" }
+        `Page ${p} of ${totalPages}`,
+        pageWidth / 2,
+        pageHeight - footerHeight + 22,
+        { align: "center" }
       );
     }
 
-    // Save and download PDF directly
-    const cleanName = material.pdf_name.replace(/\.(pdf|docx?)$/i, "").replace(/\s+/g, "_");
-    const downloadFileName = `${cleanName}_Study_Material.pdf`;
+    const cleanFileName = material.pdf_name
+      ? material.pdf_name.replace(/\.(pdf|docx?)$/i, "").replace(/\s+/g, "_")
+      : "Study_Material";
 
-    doc.save(downloadFileName);
+    doc.save(`${cleanFileName}_StudyMaterial.pdf`);
 
     toast.dismiss(toastId);
-    toast.success(`Study Material PDF downloaded (${downloadFileName})!`);
-    if (options?.onSuccess) options.onSuccess();
+    toast.success("Real text Study Material PDF downloaded successfully!");
+    options?.onSuccess?.();
   } catch (err: any) {
+    console.error("PDF generation failed:", err);
     toast.dismiss(toastId);
-    console.error("Study Material PDF generation error:", err);
-    toast.error("Failed to generate Study Material PDF.");
-    if (options?.onError) options.onError(err);
+    toast.error(`PDF generation failed: ${err.message || err}`);
+    options?.onError?.(err);
   }
 }
 
 /**
- * Builds standalone HTML markup matching the shared design system
- * for off-screen rendering when DOM element is not currently in viewport.
+ * Triggers the browser's native print preview dialog for Study Material.
+ * In browser print preview, Chromium/WebKit/Gecko render the shared DOM
+ * element into a vector-grade, 100% selectable PDF with full CSS styling.
  */
-function buildDocumentHtmlString(
-  material: StudyMaterialData,
-  title: string,
-  chapters: any[]
-): string {
-  const subtitleHtml =
-    material.subtitle && !isArtificialSubtitle(material.subtitle)
-      ? `<p style="font-size: 14px; color: #475569; margin-top: 6px; font-weight: 500;">${escapeHtml(
-          material.subtitle
-        )}</p>`
-      : "";
-
-  let chaptersHtml = "";
-  for (let c = 0; c < chapters.length; c++) {
-    const ch = chapters[c];
-    const sourceBadge = ch.sourcePages
-      ? `<span style="background: rgba(255,255,255,0.9); color: #3730a3; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 9999px; border: 1px solid #c7d2fe; margin-right: 8px;">${escapeHtml(
-          ch.sourcePages
-        )}</span>`
-      : "";
-
-    let sectionsHtml = "";
-    for (let s = 0; s < (ch.sections || []).length; s++) {
-      const sec = ch.sections[s];
-
-      let secContent = "";
-      if (sec.content) {
-        secContent += `<p style="font-size: 14px; color: #334155; line-height: 1.6; padding-left: 12px; border-left: 2px solid #cbd5e1; margin-bottom: 12px;">${escapeHtml(
-          sec.content
-        )}</p>`;
-      }
-
-      if (sec.type === "exam_points" && sec.items) {
-        secContent += `<div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;">`;
-        for (const item of sec.items) {
-          secContent += `<div style="padding: 12px; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 12px; display: flex; gap: 10px; font-size: 14px; font-weight: 600; color: #451a03; line-height: 1.5;"><span style="color: #d97706;">★</span><span>${escapeHtml(
-            item
-          )}</span></div>`;
-        }
-        secContent += `</div>`;
-      } else if (sec.type === "quick_revision" && sec.quickRevisionList) {
-        secContent += `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">`;
-        for (const qr of sec.quickRevisionList) {
-          secContent += `<div style="padding: 10px 14px; background: #ecfdf5; border: 1px solid #6ee7b7; border-radius: 12px; display: flex; justify-content: space-between; align-items: center;"><span style="font-weight: 800; color: #064e3b; font-size: 13px;">${escapeHtml(
-            qr.key
-          )}</span><span style="color: #059669; margin: 0 8px;">→</span><span style="font-weight: 600; color: #1e293b; font-size: 13px; text-align: right;">${escapeHtml(
-            qr.value
-          )}</span></div>`;
-        }
-        secContent += `</div>`;
-      } else if (sec.type === "facts" && sec.keyFactList) {
-        secContent += `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;">`;
-        for (const f of sec.keyFactList) {
-          secContent += `<div style="padding: 10px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; font-size: 13px;"><strong style="color: #0f172a;">${escapeHtml(
-            f.label
-          )}:</strong> <span style="color: #334155;">${escapeHtml(f.value)}</span></div>`;
-        }
-        secContent += `</div>`;
-      } else if (sec.type === "dates" && sec.dateList) {
-        secContent += `<div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;">`;
-        for (const d of sec.dateList) {
-          secContent += `<div style="padding: 8px 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; display: flex; align-items: center; gap: 12px; font-size: 13px;"><span style="background: #e0f2fe; color: #0369a1; font-weight: 800; padding: 2px 8px; border-radius: 6px; font-size: 11px;">${escapeHtml(
-            d.date
-          )}</span><span style="color: #1e293b; font-weight: 500;">${escapeHtml(d.event)}</span></div>`;
-        }
-        secContent += `</div>`;
-      } else if (sec.items) {
-        secContent += `<ul style="margin: 0; padding-left: 8px; list-style: none;">`;
-        for (const item of sec.items) {
-          secContent += `<li style="display: flex; align-items: flex-start; gap: 10px; font-size: 14px; color: #1e293b; line-height: 1.6; margin-bottom: 6px;"><span style="height: 6px; width: 6px; border-radius: 50%; background: #4f46e5; margin-top: 8px; shrink: 0;"></span><span>${escapeHtml(
-            item
-          )}</span></li>`;
-        }
-        secContent += `</ul>`;
-      }
-
-      sectionsHtml += `
-        <div class="pdf-block" style="margin-top: 16px;">
-          <div style="display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; margin-bottom: 10px;">
-            <span style="height: 10px; width: 10px; border-radius: 50%; background: #4f46e5;"></span>
-            <h3 style="margin: 0; font-size: 16px; font-weight: 700; color: #1e293b;">${escapeHtml(
-              sec.title
-            )}</h3>
-          </div>
-          ${secContent}
-        </div>
-      `;
-    }
-
-    chaptersHtml += `
-      <div class="chapter-container" style="margin-top: 28px;">
-        <div class="pdf-block" style="padding: 14px 18px; background: #eef2ff; border-left: 4px solid #4f46e5; border-radius: 0 12px 12px 0; display: flex; justify-content: space-between; align-items: center;">
-          <h2 style="margin: 0; font-size: 18px; font-weight: 800; color: #1e1b4b;">${escapeHtml(
-            ch.chapterTitle
-          )}</h2>
-          <div>
-            ${sourceBadge}
-            <span style="background: #4f46e5; color: #ffffff; font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 9999px;">Chapter ${
-              ch.chapterNumber || c + 1
-            }</span>
-          </div>
-        </div>
-        ${
-          ch.summary
-            ? `<p style="font-size: 13px; color: #3730a3; font-style: italic; margin: 8px 0 16px 4px;">${escapeHtml(
-                ch.summary
-              )}</p>`
-            : ""
-        }
-        <div style="padding-left: 6px;">
-          ${sectionsHtml}
-        </div>
-      </div>
-    `;
-  }
-
-  return `
-    <div style="font-family: 'Noto Sans Tamil Local', 'Noto Sans Tamil', 'Inter', sans-serif; padding: 36px 40px; background: #ffffff; color: #0f172a; width: 800px; box-sizing: border-box;">
-      <div class="pdf-block" style="border-bottom: 2px solid #4f46e5; padding-bottom: 16px; margin-bottom: 24px;">
-        <h1 style="margin: 0; font-size: 26px; font-weight: 900; color: #0f172a; line-height: 1.3;">${escapeHtml(
-          title
-        )}</h1>
-        ${subtitleHtml}
-      </div>
-      <div>
-        ${chaptersHtml}
-      </div>
-    </div>
-  `;
-}
-
-function escapeHtml(str: string): string {
-  if (!str) return "";
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
+export function printStudyMaterialDocument(): void {
+  window.print();
 }
 
 /**
- * Word (.docx) export for Study Material
+ * Generates and downloads a clean Microsoft Word (.docx) file from Study Material.
  */
 export async function generateStudyMaterialWord(
   material: StudyMaterialData,
-  options?: PdfExportOptions
+  options?: { onSuccess?: () => void; onError?: (err: any) => void }
 ): Promise<void> {
-  const toastId = toast.loading("Generating Study Material Word (.docx)...");
+  const toastId = toast.loading("Generating Word document (.docx)...");
 
   try {
     const cleanChapters = filterEducationalChapters(material.chapters);
     const cleanTitle = cleanDocumentTitle(material.title, cleanChapters[0]?.chapterTitle);
-    const docChildren: Paragraph[] = [];
 
-    // Title
-    docChildren.push(
+    const docChildren: any[] = [
       new Paragraph({
         text: cleanTitle,
         heading: HeadingLevel.TITLE,
-        spacing: { before: 0, after: 120 },
-      })
-    );
+        spacing: { after: 200 },
+      }),
+    ];
 
     if (material.subtitle && !isArtificialSubtitle(material.subtitle)) {
       docChildren.push(
         new Paragraph({
-          children: [
-            new TextRun({
-              text: material.subtitle,
-              italics: true,
-              color: "64748b",
-            }),
-          ],
+          text: cleanUnwantedTamilSymbols(normalizeTamilUnicode(material.subtitle)),
           spacing: { after: 300 },
         })
       );
     }
 
-    // Chapters
-    for (const ch of cleanChapters) {
+    for (let c = 0; c < cleanChapters.length; c++) {
+      const ch = cleanChapters[c];
+      const chTitle = cleanUnwantedTamilSymbols(normalizeTamilUnicode(ch.chapterTitle));
       docChildren.push(
         new Paragraph({
-          text: ch.chapterTitle,
+          text: `Chapter ${ch.chapterNumber || c + 1}: ${chTitle}`,
           heading: HeadingLevel.HEADING_1,
-          spacing: { before: 300, after: 140 },
+          spacing: { before: 300, after: 150 },
         })
       );
 
       if (ch.summary) {
         docChildren.push(
           new Paragraph({
-            children: [new TextRun({ text: ch.summary, italics: true })],
-            spacing: { after: 180 },
+            text: cleanUnwantedTamilSymbols(normalizeTamilUnicode(ch.summary)),
+            spacing: { after: 200 },
           })
         );
       }
 
-      for (const sec of ch.sections) {
+      for (const sec of ch.sections || []) {
+        const secTitle = cleanUnwantedTamilSymbols(normalizeTamilUnicode(sec.title || ""));
         docChildren.push(
           new Paragraph({
-            text: sec.title,
+            text: secTitle,
             heading: HeadingLevel.HEADING_2,
             spacing: { before: 200, after: 100 },
           })
@@ -506,63 +568,32 @@ export async function generateStudyMaterialWord(
         if (sec.content) {
           docChildren.push(
             new Paragraph({
-              text: sec.content,
-              spacing: { after: 120 },
+              text: cleanUnwantedTamilSymbols(normalizeTamilUnicode(sec.content)),
+              spacing: { after: 150 },
             })
           );
         }
 
-        if (sec.items) {
-          sec.items.forEach((it) => {
+        if (sec.items && sec.items.length > 0) {
+          for (const item of sec.items) {
             docChildren.push(
               new Paragraph({
-                text: `• ${it}`,
+                text: `• ${cleanUnwantedTamilSymbols(normalizeTamilUnicode(item))}`,
                 spacing: { after: 80 },
               })
             );
-          });
+          }
         }
 
-        if (sec.quickRevisionList) {
-          sec.quickRevisionList.forEach((q) => {
+        if (sec.quickRevisionList && sec.quickRevisionList.length > 0) {
+          for (const qr of sec.quickRevisionList) {
             docChildren.push(
               new Paragraph({
-                children: [
-                  new TextRun({ text: `${q.key} → `, bold: true, color: "065f46" }),
-                  new TextRun({ text: q.value, color: "0f172a" }),
-                ],
+                text: `• ${cleanUnwantedTamilSymbols(normalizeTamilUnicode(qr.key))} → ${cleanUnwantedTamilSymbols(normalizeTamilUnicode(qr.value))}`,
                 spacing: { after: 80 },
               })
             );
-          });
-        }
-
-        if (sec.keyFactList) {
-          sec.keyFactList.forEach((f) => {
-            docChildren.push(
-              new Paragraph({
-                children: [
-                  new TextRun({ text: `${f.label}: `, bold: true }),
-                  new TextRun({ text: f.value }),
-                ],
-                spacing: { after: 80 },
-              })
-            );
-          });
-        }
-
-        if (sec.dateList) {
-          sec.dateList.forEach((d) => {
-            docChildren.push(
-              new Paragraph({
-                children: [
-                  new TextRun({ text: `[${d.date}] `, bold: true, color: "0284c7" }),
-                  new TextRun({ text: d.event }),
-                ],
-                spacing: { after: 80 },
-              })
-            );
-          });
+          }
         }
       }
     }
@@ -572,16 +603,18 @@ export async function generateStudyMaterialWord(
     });
 
     const blob = await Packer.toBlob(doc);
-    const cleanName = material.pdf_name.replace(/\.(pdf|docx?)$/i, "").replace(/\s+/g, "_");
-    saveAs(blob, `${cleanName}_Study_Material.docx`);
+    const cleanFileName = material.pdf_name
+      ? material.pdf_name.replace(/\.(pdf|docx?)$/i, "").replace(/\s+/g, "_")
+      : "Study_Material";
 
+    saveAs(blob, `${cleanFileName}_StudyMaterial.docx`);
     toast.dismiss(toastId);
-    toast.success("Study Material Word (.docx) downloaded!");
-    if (options?.onSuccess) options.onSuccess();
+    toast.success("Word document (.docx) downloaded successfully!");
+    options?.onSuccess?.();
   } catch (err: any) {
+    console.error("Word export failed:", err);
     toast.dismiss(toastId);
-    console.error("Word generation error:", err);
-    toast.error("Failed to generate Word document.");
-    if (options?.onError) options.onError(err);
+    toast.error(`Word document export failed: ${err.message || err}`);
+    options?.onError?.(err);
   }
 }
