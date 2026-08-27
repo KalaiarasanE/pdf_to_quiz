@@ -21,6 +21,7 @@ export interface StreamConfig {
   tamilLlamaUrl?: string;
   tamilLlamaKey?: string;
   tamilLlamaModel?: string;
+  avoidQuestions?: string[];
 }
 
 export type MCQ = {
@@ -45,6 +46,7 @@ export async function* generateMCQStream(config: StreamConfig): AsyncGenerator<M
     tamilLlamaUrl,
     tamilLlamaKey,
     tamilLlamaModel,
+    avoidQuestions,
   } = config;
 
   const serverGeminiKey =
@@ -103,8 +105,13 @@ Rules:
 - Each JSON object MUST be on a single line (no raw newlines inside the JSON string; escape newlines in text as \\n).
 - Begin the output directly with the first question's JSON object.`;
 
+  const avoidSection =
+    avoidQuestions && avoidQuestions.length > 0
+      ? `\nCRITICAL DEDUPLICATION RULE:\nDo NOT repeat or generate questions similar to these already-created questions:\n${avoidQuestions.slice(-25).map((q, i) => `${i + 1}. ${q}`).join("\n")}\nGenerate completely fresh questions on other concepts, facts, or sections.\n`
+      : "";
+
   const prompt = `Generate exactly ${count} multiple choice questions from the material below.
-${difficultyLine}
+${difficultyLine}${avoidSection}
 
 Each line of your output must be a single JSON object with this exact shape:
 {"question":"...","options":["Option A","Option B","Option C","Option D"],"correctAnswer":"<one of the options, verbatim>","explanation":"...","difficulty":"Easy|Medium|Hard","category":"..."}
@@ -127,7 +134,10 @@ ${sourceText}
     if (!key) {
       throw new Error("No Gemini API key provided. Please configure it in Settings or .env file.");
     }
-    const model = modelName || "gemini-3.5-flash";
+    let model = modelName || "gemini-3.1-flash-lite";
+    if (model === "gemini-2.5-flash") {
+      model = "gemini-3.1-flash-lite";
+    }
     url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?key=${key}`;
     body = {
       contents: [{ role: "user", parts: [{ text: `${systemPrompt}\n\n${prompt}` }] }],
@@ -193,29 +203,82 @@ ${sourceText}
   const collectedRawMcqs: MCQ[] = [];
 
   function parseLine(line: string): MCQ | null {
-    if (!line || line.startsWith("```")) return null;
+    if (!line) return null;
+    let cleanLine = line.trim();
+    if (cleanLine.startsWith("```")) return null;
+    // Strip trailing commas and surrounding json array tokens
+    cleanLine = cleanLine.replace(/^\s*\[/, "").replace(/\]\s*$/, "").replace(/,\s*$/, "").trim();
+    if (!cleanLine.startsWith("{") || !cleanLine.endsWith("}")) {
+      const s = cleanLine.indexOf("{");
+      const e = cleanLine.lastIndexOf("}");
+      if (s !== -1 && e !== -1 && e > s) {
+        cleanLine = cleanLine.slice(s, e + 1);
+      } else {
+        return null;
+      }
+    }
     try {
-      const parsed = JSON.parse(line);
+      const parsed = JSON.parse(cleanLine);
       if (
         parsed &&
         typeof parsed.question === "string" &&
         Array.isArray(parsed.options) &&
         parsed.options.length === 4 &&
-        typeof parsed.correctAnswer === "string"
+        (typeof parsed.correctAnswer === "string" || typeof parsed.correctAnswer === "number")
       ) {
-        const cleanQ = cleanUnwantedTamilSymbols(normalizeTamilUnicode(parsed.question.trim()));
-        const cleanOpts = parsed.options.map((opt: string) =>
-          cleanUnwantedTamilSymbols(normalizeTamilUnicode((opt || "").trim()))
-        );
-        const cleanAns = cleanUnwantedTamilSymbols(normalizeTamilUnicode(parsed.correctAnswer.trim()));
+        let cleanQ = cleanUnwantedTamilSymbols(normalizeTamilUnicode(parsed.question.trim()));
+        cleanQ = cleanQ.replace(/^(?:Q|Question|Q\s*No)?\s*\d*\s*[-.:)]\s*/i, "").trim();
+        cleanQ = cleanQ.replace(/^Q\d+\s*/i, "").trim();
+        if (cleanQ.length < 5) return null;
+
+        const cleanOpts = parsed.options.map((opt: any) => {
+          let o = cleanUnwantedTamilSymbols(normalizeTamilUnicode(String(opt || "").trim()));
+          return o.replace(/^[A-D1-4][\.\)\:\-]\s*/i, "").trim();
+        });
+
+        // Validate all 4 options are non-empty
+        if (cleanOpts.some((o: string) => !o || o.length === 0)) return null;
+
+        // Validate all 4 options are distinct
+        const distinctOpts = new Set(cleanOpts.map((o: string) => o.toLowerCase()));
+        if (distinctOpts.size !== 4) return null;
+
+        let rawAns = cleanUnwantedTamilSymbols(normalizeTamilUnicode(String(parsed.correctAnswer).trim()));
+        rawAns = rawAns.replace(/^[A-D1-4][\.\)\:\-]\s*/i, "").trim();
+
+        // Check if answer is letter A, B, C, D
+        let matchedOpt: string | null = null;
+        const letterMatch = String(parsed.correctAnswer).trim().match(/^(?:option\s*)?([A-D1-4])$/i);
+        if (letterMatch) {
+          const val = letterMatch[1].toUpperCase();
+          let idx = -1;
+          if (val >= "A" && val <= "D") idx = val.charCodeAt(0) - 65;
+          else if (val >= "1" && val <= "4") idx = parseInt(val, 10) - 1;
+          if (idx >= 0 && idx < 4) matchedOpt = cleanOpts[idx];
+        }
+
+        if (!matchedOpt) {
+          matchedOpt = cleanOpts.find((o: string) => o === rawAns) || null;
+        }
+        if (!matchedOpt) {
+          matchedOpt = cleanOpts.find((o: string) => o.toLowerCase() === rawAns.toLowerCase()) || null;
+        }
+        if (!matchedOpt) {
+          const normAns = rawAns.replace(/[^\p{L}\p{N}]+/gu, "").toLowerCase();
+          matchedOpt = cleanOpts.find((o: string) => o.replace(/[^\p{L}\p{N}]+/gu, "").toLowerCase() === normAns) || null;
+        }
+
+        // If answer does not match any of the 4 options, question is invalid
+        if (!matchedOpt) return null;
+
         const cleanExp = parsed.explanation
-          ? cleanUnwantedTamilSymbols(normalizeTamilUnicode(parsed.explanation.trim()))
+          ? cleanUnwantedTamilSymbols(normalizeTamilUnicode(String(parsed.explanation).trim()))
           : "";
 
         return {
           question: cleanQ,
           options: cleanOpts,
-          correctAnswer: cleanAns,
+          correctAnswer: matchedOpt,
           explanation: cleanExp,
           difficulty: parsed.difficulty || "Medium",
           category: parsed.category || "Concept",
@@ -271,7 +334,9 @@ ${sourceText}
           try {
             const unescapedText = JSON.parse(`"${escapedText}"`);
             textSegments += unescapedText;
-          } catch {}
+          } catch {
+            textSegments += escapedText.replace(/\\n/g, "\n").replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+          }
 
           buffer = buffer.slice(quoteEnd + 1);
           searchIndex = 0;
@@ -285,11 +350,7 @@ ${sourceText}
             textBuffer = textBuffer.slice(newlineIdx + 1);
             const mcq = parseLine(line);
             if (mcq) {
-              if (isTamil) {
-                collectedRawMcqs.push(mcq);
-              } else {
-                yield mcq;
-              }
+              yield mcq;
             }
           }
         }
@@ -325,11 +386,14 @@ ${sourceText}
     }
 
     // Process leftover textBuffer
-    const finalLine = textBuffer.trim();
-    if (finalLine) {
-      const mcq = parseLine(finalLine);
-      if (mcq) {
-        yield mcq;
+    const remainingLines = textBuffer.split("\n");
+    for (const rawL of remainingLines) {
+      const line = rawL.trim();
+      if (line) {
+        const mcq = parseLine(line);
+        if (mcq) {
+          yield mcq;
+        }
       }
     }
   } finally {

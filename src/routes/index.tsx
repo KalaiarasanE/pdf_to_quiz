@@ -2303,8 +2303,9 @@ function App() {
                 />
               )}
 
-              {stage === "configuring" && pdf && (
+              {(stage === "configuring" || stage === "generating") && pdf && (
                 <ConfigureStage
+                  stage={stage}
                   pdf={pdf}
                   currentFile={currentFile}
                   apiKey={apiKey}
@@ -3386,6 +3387,7 @@ type ConfigureProps = {
   apiProvider: "gemini" | "openai" | "lovable";
   modelName: string;
   onBack: () => void;
+  stage?: Stage;
   onStartGenerating: () => void;
   onFinished: (mcqs: MCQ[], timeSec: number) => void;
   onSwitchToStudyMaterial?: () => void;
@@ -3398,8 +3400,154 @@ type ConfigureProps = {
 
 type ChecklistStep = {
   id: string;
-  label: string;
+  activeLabel: string;
+  doneLabel: string;
   status: "idle" | "running" | "done" | "error";
+};
+
+// MCQ Question validation & deduplication helpers
+const normalizeForFingerprint = (text: string): string => {
+  const cleaned = cleanQuestionText(text);
+  return cleaned
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+};
+
+const getWordTokens = (text: string): Set<string> => {
+  const norm = normalizeForFingerprint(text);
+  const words = norm.split(/\s+/).filter((w) => w.length > 2);
+  return new Set(words);
+};
+
+const isDuplicateQuestion = (
+  newQ: string,
+  existingFingerprints: Set<string>,
+  existingWordSets: Set<string>[]
+): boolean => {
+  const norm = normalizeForFingerprint(newQ);
+  if (!norm || norm.length < 5) return true;
+  if (existingFingerprints.has(norm)) return true;
+
+  const newWords = getWordTokens(newQ);
+  if (newWords.size >= 4) {
+    for (const exWords of existingWordSets) {
+      if (exWords.size >= 4) {
+        let intersection = 0;
+        for (const w of newWords) {
+          if (exWords.has(w)) intersection++;
+        }
+        const union = newWords.size + exWords.size - intersection;
+        const jaccard = union > 0 ? intersection / union : 0;
+        if (jaccard >= 0.82) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+};
+
+const validateAndSanitizeMCQ = (
+  raw: any,
+  defaultDiff: "Easy" | "Medium" | "Hard" | "Mixed"
+): MCQ | null => {
+  if (!raw || typeof raw !== "object") return null;
+
+  // 1. Question text
+  if (typeof raw.question !== "string") return null;
+  const question = cleanQuestionText(raw.question);
+  if (!question || question.length < 5) return null;
+
+  // 2. Options: exactly 4 non-empty distinct
+  if (!Array.isArray(raw.options) || raw.options.length !== 4) return null;
+  const rawOptions = raw.options.map((o: any) => cleanOptionText(String(o || "").trim()));
+  if (rawOptions.some((o: string) => !o || o.length === 0)) return null;
+
+  const distinctOpts = new Set(rawOptions.map((o: string) => o.toLowerCase()));
+  if (distinctOpts.size !== 4) return null;
+
+  // 3. Correct answer
+  if (typeof raw.correctAnswer !== "string" && typeof raw.correctAnswer !== "number") {
+    return null;
+  }
+  const rawAns = String(raw.correctAnswer || "").trim();
+  if (!rawAns) return null;
+  const cleanAns = cleanOptionText(rawAns);
+
+  let matchedOption: string | null = null;
+  const letterMatch = rawAns.match(/^(?:option\s*)?([A-D1-4])$/i);
+  if (letterMatch) {
+    const val = letterMatch[1].toUpperCase();
+    let idx = -1;
+    if (val >= "A" && val <= "D") idx = val.charCodeAt(0) - 65;
+    else if (val >= "1" && val <= "4") idx = parseInt(val, 10) - 1;
+    if (idx >= 0 && idx < 4) matchedOption = rawOptions[idx];
+  }
+
+  if (!matchedOption) {
+    matchedOption = rawOptions.find((opt: string) => opt === cleanAns) || null;
+  }
+  if (!matchedOption) {
+    matchedOption =
+      rawOptions.find((opt: string) => opt.toLowerCase() === cleanAns.toLowerCase()) || null;
+  }
+  if (!matchedOption) {
+    const ansNorm = cleanAns.replace(/[^\p{L}\p{N}]+/gu, "").toLowerCase();
+    matchedOption =
+      rawOptions.find((opt: string) => {
+        const optNorm = opt.replace(/[^\p{L}\p{N}]+/gu, "").toLowerCase();
+        return optNorm === ansNorm;
+      }) || null;
+  }
+
+  if (!matchedOption) return null;
+
+  const explanation = raw.explanation
+    ? cleanUnwantedTamilSymbols(normalizeTamilUnicode(String(raw.explanation).trim()))
+    : "";
+
+  const difficulty: "Easy" | "Medium" | "Hard" =
+    raw.difficulty === "Easy" || raw.difficulty === "Medium" || raw.difficulty === "Hard"
+      ? raw.difficulty
+      : defaultDiff === "Mixed"
+        ? "Medium"
+        : defaultDiff;
+
+  const category =
+    typeof raw.category === "string" && raw.category.trim().length > 0
+      ? raw.category.trim()
+      : "Concept";
+
+  return {
+    question,
+    options: rawOptions,
+    correctAnswer: matchedOption,
+    explanation,
+    difficulty,
+    category,
+  };
+};
+
+const getBatchText = (
+  batchIndex: number,
+  totalBatches: number,
+  pages: { pageNum: number; text: string }[]
+): string => {
+  if (!pages || pages.length === 0) return "";
+  if (pages.length <= 4) {
+    return pages.map((p) => p.text).join("\n\n");
+  }
+  const pagesPerBatch = Math.max(1, Math.ceil(pages.length / totalBatches));
+  const start = (batchIndex * pagesPerBatch) % pages.length;
+  const end = Math.min(pages.length, start + pagesPerBatch);
+  const slice = pages.slice(start, end);
+  let combined = slice.map((p) => p.text).join("\n\n");
+  if (combined.trim().length < 300) {
+    combined = pages.map((p) => p.text).join("\n\n");
+  }
+  const MAX_CHARS = 50000;
+  return combined.length > MAX_CHARS ? combined.slice(0, MAX_CHARS) : combined;
 };
 
 function ConfigureStage({
@@ -3408,6 +3556,7 @@ function ConfigureStage({
   apiKey,
   apiProvider,
   modelName,
+  stage,
   onBack,
   onStartGenerating,
   onFinished,
@@ -3421,7 +3570,7 @@ function ConfigureStage({
 
   const [count, setCount] = useState<number>(20);
   const [difficulty, setDifficulty] = useState<"Easy" | "Medium" | "Hard" | "Mixed">("Mixed");
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(stage === "generating");
   const [liveQuestions, setLiveQuestions] = useState<MCQ[]>([]);
   const [genTime, setGenTime] = useState<number>(0);
   const [progress, setProgress] = useState(0);
@@ -3492,11 +3641,13 @@ function ConfigureStage({
 
   // Progress checklists
   const [checklist, setChecklist] = useState<ChecklistStep[]>([
-    { id: "load", label: "Uploading PDF content...", status: "idle" },
-    { id: "text", label: "Extracting document text...", status: "idle" },
-    { id: "understand", label: "Understanding content themes...", status: "idle" },
-    { id: "generate", label: "Generating MCQ questions in parallel...", status: "idle" },
-    { id: "complete", label: "Completed", status: "idle" },
+    { id: "load", activeLabel: "Preparing document...", doneLabel: "PDF uploaded", status: "idle" },
+    { id: "text", activeLabel: "Extracting content...", doneLabel: "Content extracted", status: "idle" },
+    { id: "understand", activeLabel: "Understanding content...", doneLabel: "Content understood", status: "idle" },
+    { id: "generate", activeLabel: "Generating questions...", doneLabel: "Questions generated", status: "idle" },
+    { id: "dedup", activeLabel: "Checking questions...", doneLabel: "No duplicates found", status: "idle" },
+    { id: "finalize", activeLabel: "Finalizing...", doneLabel: "All questions ready", status: "idle" },
+    { id: "complete", activeLabel: "Completing...", doneLabel: "Generation completed", status: "idle" },
   ]);
 
   const estimated = useMemo(
@@ -3522,7 +3673,7 @@ function ConfigureStage({
     addLog("Checking questions cache...");
     try {
       const cachedQuestions = await PDFCache.get(questionsCacheKey);
-      if (cachedQuestions) {
+      if (cachedQuestions && Array.isArray(cachedQuestions) && cachedQuestions.length === count) {
         addLog("Cache hit! Found generated questions in IndexedDB.");
         toast.success("Loaded generated questions from local cache!");
         setLiveQuestions(cachedQuestions);
@@ -3531,6 +3682,8 @@ function ConfigureStage({
         updateStep("text", "done");
         updateStep("understand", "done");
         updateStep("generate", "done");
+        updateStep("dedup", "done");
+        updateStep("finalize", "done");
         updateStep("complete", "done");
 
         onFinished(cachedQuestions, 1);
@@ -3542,7 +3695,7 @@ function ConfigureStage({
 
     onStartGenerating();
     updateStep("load", "running");
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, 200));
     updateStep("load", "done");
 
     updateStep("text", "running");
@@ -3555,7 +3708,7 @@ function ConfigureStage({
     let allPagesList: { pageNum: number; text: string }[] = [];
 
     try {
-      // Check if we have cached text meta first
+      // 1. Text extraction
       const textCacheKey = `pdf_cache_${pdf.name}_${pdf.size}_${pdf.lastModified}`;
       addLog("Checking document text cache...");
       const cachedMeta = await PDFCache.get(textCacheKey);
@@ -3568,7 +3721,11 @@ function ConfigureStage({
         addLog("Cache hit! Found pre-extracted page text list in IndexedDB.");
         allPagesList = cachedMeta.pageList;
         setProgress(100);
-      } else if (pdf.fileType === "doc" || pdf.fileType === "docx" || (currentFile && currentFile.name.match(/\.docx?$/i))) {
+      } else if (
+        pdf.fileType === "doc" ||
+        pdf.fileType === "docx" ||
+        (currentFile && currentFile.name.match(/\.docx?$/i))
+      ) {
         if (!currentFile) {
           throw new Error("Missing reference to the uploaded Word document. Please try re-uploading.");
         }
@@ -3577,7 +3734,6 @@ function ConfigureStage({
         allPagesList = docxData.pageList;
         setProgress(100);
       } else {
-        // Cache miss - load PDF and extract text
         if (!currentFile) {
           throw new Error("Missing reference to the uploaded PDF file. Please try re-uploading.");
         }
@@ -3589,9 +3745,7 @@ function ConfigureStage({
 
         const buf = await currentFile.arrayBuffer();
         doc = await pdfjs.getDocument({ data: buf }).promise;
-        addLog(
-          `PDF loaded. Total pages: ${doc.numPages}. Scanning pages for educational content...`,
-        );
+        addLog(`PDF loaded. Total pages: ${doc.numPages}. Scanning pages for educational content...`);
 
         allPagesList = await getPDFPagesTextFast(doc, (current, total) => {
           setProgress(Math.round((current / total) * 90));
@@ -3605,10 +3759,8 @@ function ConfigureStage({
       updateStep("text", "done");
       updateStep("understand", "running");
 
-      // Heuristic page selection
-      addLog(
-        "Analyzing document pages to skip cover pages, copyright page, table of contents, index, and blank pages...",
-      );
+      // 2. Filter active pages
+      addLog("Analyzing document content to skip cover pages, table of contents, and blank pages...");
       const activePages: { pageNum: number; text: string; isScanned?: boolean }[] = [];
       const skippedPagesCount: number[] = [];
       let scannedPagesCount = 0;
@@ -3619,23 +3771,16 @@ function ConfigureStage({
           skippedPagesCount.push(p.pageNum);
           return;
         }
-
         const isScanned = p.text.trim().length < 50;
         if (isScanned) {
           scannedPagesCount++;
         }
-
         activePages.push({ ...p, isScanned });
       });
 
       addLog(
         `Filtering complete. Active pages: ${activePages.length}/${totalPagesCount} (Skipped ${skippedPagesCount.length} non-content pages).`,
       );
-      if (scannedPagesCount > activePages.length * 0.6) {
-        addLog(
-          `Detected high ratio of scanned/image pages (${scannedPagesCount}). Running in OCR Fallback Mode.`,
-        );
-      }
 
       let finalActivePages = activePages;
       if (activePages.length === 0) {
@@ -3643,256 +3788,234 @@ function ConfigureStage({
         finalActivePages = allPagesList.map((p) => ({ ...p, isScanned: true }));
       }
 
-      // Split into batches
-      const batchSize = 15;
-      const batches: {
-        batchIndex: number;
-        pages: { pageNum: number; text: string; isScanned?: boolean }[];
-      }[] = [];
-      for (let i = 0; i < finalActivePages.length; i += batchSize) {
-        batches.push({
-          batchIndex: Math.floor(i / batchSize),
-          pages: finalActivePages.slice(i, i + batchSize),
-        });
+      // OCR any scanned pages if needed
+      for (const pageObj of finalActivePages) {
+        if (pageObj.isScanned) {
+          addLog(`Running OCR on page ${pageObj.pageNum}...`);
+          if (!doc && currentFile) {
+            const pdfjs = await import("pdfjs-dist");
+            const workerUrl = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")).default;
+            pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
+            const buf = await currentFile.arrayBuffer();
+            doc = await pdfjs.getDocument({ data: buf }).promise;
+          }
+          if (doc) {
+            const ocrText = await runOcrOnPage(doc, pageObj.pageNum);
+            pageObj.text = ocrText;
+            pageObj.isScanned = false;
+          }
+        }
+      }
+
+      // Normalize text across pages
+      for (const p of finalActivePages) {
+        p.text = cleanUnwantedTamilSymbols(normalizeTamilUnicode(p.text));
       }
 
       updateStep("understand", "done");
       updateStep("generate", "running");
 
-      const totalBatches = batches.length;
-      console.log(`[10] MCQ generation started (total ${totalBatches} batches)`);
-      addLog(
-        `Divided active pages into ${totalBatches} batches. Initializing Parallel Stream Generation Queue...`,
-      );
-
+      const targetCount = count;
       const questionsList: MCQ[] = [];
-      let activeWorkerCount = 0;
-      let nextBatchIndex = 0;
-      let isAborted = false;
-      let processedPagesCount = 0;
+      const seenFingerprints = new Set<string>();
+      const seenWordSets: Set<string>[] = [];
 
-      // Track language properties
-      const hasLegacyTamil = pdf.hasLegacyTamil || false;
-      const fontEncoding = pdf.fontEncoding || "None";
-      const primaryLanguage = detectedLang.primaryLanguage;
-      const isMultilingual = detectedLang.isMultilingual;
-      const languages = detectedLang.languages;
+      const addValidatedQuestion = (validMcq: MCQ): boolean => {
+        if (questionsList.length >= targetCount) return false;
+        questionsList.push(validMcq);
+        const fp = normalizeForFingerprint(validMcq.question);
+        seenFingerprints.add(fp);
+        seenWordSets.push(getWordTokens(validMcq.question));
+        setLiveQuestions([...questionsList]);
+        addLog(`[Stream] ✅ Q${questionsList.length}/${targetCount}: ${validMcq.question.slice(0, 50)}...`);
+        return true;
+      };
 
-      async function runNextBatch() {
-        if (isAborted || nextBatchIndex >= totalBatches || questionsList.length >= count) {
-          return;
+      // Helper to stream a batch from /api/generate
+      const streamBatch = async (
+        batchText: string,
+        reqCount: number,
+        avoidList: string[]
+      ): Promise<number> => {
+        if (reqCount <= 0 || questionsList.length >= targetCount) return 0;
+        let addedInBatch = 0;
+
+        const response = await fetch("/api/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: batchText,
+            count: reqCount,
+            difficulty,
+            apiKey,
+            apiProvider,
+            modelName,
+            selectedLanguage,
+            tamilLlamaUrl,
+            tamilLlamaKey,
+            tamilLlamaModel,
+            avoidQuestions: avoidList,
+          }),
+        });
+
+        if (!response.ok) {
+          const errText = await response.text();
+          let errMsg = `Generation failed (${response.status})`;
+          try {
+            const parsed = JSON.parse(errText);
+            if (parsed.error) errMsg = parsed.error;
+          } catch {}
+          throw new Error(errMsg);
         }
 
-        const batchIdx = nextBatchIndex++;
-        activeWorkerCount++;
-        const batch = batches[batchIdx];
+        if (!response.body) throw new Error("No response stream body");
 
-        addLog(
-          `[Batch ${batchIdx + 1}/${totalBatches}] Processing pages ${batch.pages[0].pageNum}–${batch.pages[batch.pages.length - 1].pageNum}...`,
-        );
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let streamBuffer = "";
 
         try {
-          // 1. OCR fallback for pages in this batch
-          const batchPagesText: string[] = [];
-          for (const pageObj of batch.pages) {
-            let pText = pageObj.text;
-            if (pageObj.isScanned) {
-              addLog(`[Batch ${batchIdx + 1}] Running OCR on page ${pageObj.pageNum}...`);
-              if (!doc && currentFile) {
-                const pdfjs = await import("pdfjs-dist");
-                const workerUrl = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")).default;
-                pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
-                const buf = await currentFile.arrayBuffer();
-                doc = await pdfjs.getDocument({ data: buf }).promise;
-              }
-              pText = await runOcrOnPage(doc, pageObj.pageNum);
-            }
-            batchPagesText.push(pText);
-            const pIdx = allPagesList.findIndex((pl) => pl.pageNum === pageObj.pageNum);
-            if (pIdx !== -1) {
-              allPagesList[pIdx].text = pText;
-            }
-          }
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
 
-          let batchText = batchPagesText.join("\n\n");
-          logTamilStage("A", `Raw MCQ Extracted Batch Text (Batch ${batchIdx + 1})`, batchText);
-          batchText = cleanUnwantedTamilSymbols(normalizeTamilUnicode(batchText));
-          logTamilStage("B", `Unicode-Normalized MCQ Batch Text (Batch ${batchIdx + 1})`, batchText);
+            streamBuffer += decoder.decode(value, { stream: true });
+            let nlIdx;
+            while ((nlIdx = streamBuffer.indexOf("\n")) !== -1) {
+              const line = streamBuffer.slice(0, nlIdx).trim();
+              streamBuffer = streamBuffer.slice(nlIdx + 1);
+              if (!line) continue;
 
-          if (batchText.trim().length < 100) {
-            addLog(`[Batch ${batchIdx + 1}] Skip: Batch contains no readable text.`);
-            return;
-          }
-
-          // 2. Language conversion (if Tamil font encoding detected)
-          const words = batchText.split(/\s+/);
-          let legacyWordCount = 0;
-          const legacyRegex =
-            /([a-zA-Z]+;[a-zA-Z]*)|(thz|Fw;|ghj;|xypia|Kjd;|Kjypy;|xyp|tpah|ghu;)/;
-          for (const word of words) {
-            if (legacyRegex.test(word)) legacyWordCount++;
-          }
-          let batchLegacyPct = words.length > 0 ? (legacyWordCount / words.length) * 100 : 0;
-          if (/[\u0B80-\u0BFF]/.test(batchText)) {
-            // Already standard Tamil Unicode - do NOT run legacy conversion!
-            batchLegacyPct = 0;
-          }
-
-          if (batchLegacyPct > 5) {
-            addLog(
-              `[Batch ${batchIdx + 1}] Legacy Tamil font encoding detected in batch text. Converting to Unicode...`,
-            );
-            try {
-              const convertRes = await fetch("/api/convert-legacy-tamil", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ text: batchText }),
-              });
-              if (convertRes.ok) {
-                const data = await convertRes.json();
-                if (data.text) {
-                  batchText = data.text;
-                  addLog(
-                    `[Batch ${batchIdx + 1}] Successfully converted Tamil encoding to Unicode.`,
-                  );
+              try {
+                const parsed = JSON.parse(line);
+                if (parsed.error) {
+                  console.warn("Stream line error:", parsed.error);
+                  continue;
                 }
-              }
-            } catch (err) {
-              console.error("Tamil conversion failed for batch", err);
-            }
-          }
-
-          // 3. AI Stream Request
-          const questionsPerBatch = Math.min(
-            Math.ceil(count / totalBatches),
-            count - questionsList.length,
-          );
-
-          if (questionsPerBatch > 0) {
-            addLog(
-              `[Batch ${batchIdx + 1}] Sending text to AI for ${questionsPerBatch} questions...`,
-            );
-            const response = await fetch("/api/generate", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                text: batchText,
-                count: questionsPerBatch,
-                difficulty,
-                apiKey,
-                apiProvider,
-                modelName,
-                selectedLanguage,
-                tamilLlamaUrl,
-                tamilLlamaKey,
-                tamilLlamaModel,
-              }),
-            });
-
-            if (!response.ok) {
-              const errJson = await response.json();
-              throw new Error(errJson.error || "Internal Server Error during batch generation");
-            }
-
-            if (response.body) {
-              const reader = response.body.getReader();
-              const decoder = new TextDecoder();
-              let buffer = "";
-
-              while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                buffer += decoder.decode(value, { stream: true });
-                let newlineIdx;
-                while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
-                  const line = buffer.slice(0, newlineIdx).trim();
-                  buffer = buffer.slice(newlineIdx + 1);
-                  if (!line) continue;
-
-                  try {
-                    const parsed = JSON.parse(line);
-                    if (parsed.error) throw new Error(parsed.error);
-                    if (parsed.question) {
-                      const cleanQ = cleanQuestionText(parsed.question);
-                      const cleanOpts = (parsed.options || []).map((o: string) => cleanOptionText(o));
-                      const cleanAns = cleanOptionText(parsed.correctAnswer || "");
-                      const cleanExp = parsed.explanation
-                        ? cleanUnwantedTamilSymbols(normalizeTamilUnicode(parsed.explanation))
-                        : "";
-                      const sanitizedMcq = {
-                        ...parsed,
-                        question: cleanQ,
-                        options: cleanOpts,
-                        correctAnswer: cleanAns,
-                        explanation: cleanExp,
-                      };
-                      questionsList.push(sanitizedMcq);
-                      setLiveQuestions([...questionsList]);
-                      addLog(
-                        `[Stream] ✅ Q${questionsList.length}: ${cleanQ.slice(0, 50)}...`,
-                      );
+                if (parsed.question) {
+                  const validated = validateAndSanitizeMCQ(parsed, difficulty);
+                  if (
+                    validated &&
+                    !isDuplicateQuestion(validated.question, seenFingerprints, seenWordSets)
+                  ) {
+                    const added = addValidatedQuestion(validated);
+                    if (added) addedInBatch++;
+                    if (questionsList.length >= targetCount) {
+                      try {
+                        reader.cancel();
+                      } catch {}
+                      return addedInBatch;
                     }
-                  } catch (err) {
-                    // Partial JSON error
                   }
                 }
+              } catch {}
+            }
+          }
+        } finally {
+          try {
+            reader.releaseLock();
+          } catch {}
+        }
+
+        if (streamBuffer.trim()) {
+          try {
+            const parsed = JSON.parse(streamBuffer.trim());
+            if (parsed.question) {
+              const validated = validateAndSanitizeMCQ(parsed, difficulty);
+              if (
+                validated &&
+                !isDuplicateQuestion(validated.question, seenFingerprints, seenWordSets)
+              ) {
+                const added = addValidatedQuestion(validated);
+                if (added) addedInBatch++;
               }
             }
-          }
-        } catch (err) {
-          addLog(`[Batch ${batchIdx + 1} Error] ${err instanceof Error ? err.message : err}`);
-        } finally {
-          activeWorkerCount--;
-          processedPagesCount += batch.pages.length;
-
-          // Progress metrics calculations
-          const percent = Math.round((processedPagesCount / totalPagesCount) * 100);
-          const remaining = totalPagesCount - processedPagesCount;
-          const elapsed = Math.round((Date.now() - startTime) / 1000);
-          const avgTimePerPage = elapsed / processedPagesCount;
-          const estTimeRemaining = Math.round(avgTimePerPage * remaining);
-
-          setPipelineProgress({
-            percent: Math.min(100, percent),
-            currentPage: batch.pages[batch.pages.length - 1].pageNum,
-            totalPages: totalPagesCount,
-            remainingPages: remaining,
-            estimatedTimeSec: estTimeRemaining > 0 ? estTimeRemaining : 0,
-          });
-
-          // Abort checking and loop continuation
-          if (questionsList.length >= count) {
-            if (!isAborted) {
-              isAborted = true;
-              addLog(`[Finish] Generated target of ${count} questions successfully!`);
-            }
-          } else {
-            await runNextBatch();
-          }
+          } catch {}
         }
+
+        return addedInBatch;
+      };
+
+      // 3. Batch generation internally (batches of up to 20)
+      const INTERNAL_BATCH_SIZE = 20;
+      const initialBatchesCount = Math.max(1, Math.ceil(targetCount / INTERNAL_BATCH_SIZE));
+      const batchPlans: { index: number; text: string; count: number }[] = [];
+
+      for (let i = 0; i < initialBatchesCount; i++) {
+        const bCount = Math.min(INTERNAL_BATCH_SIZE, targetCount - i * INTERNAL_BATCH_SIZE);
+        const bText = getBatchText(i, initialBatchesCount, finalActivePages);
+        batchPlans.push({ index: i, text: bText, count: bCount });
       }
 
-      // Spawn workers in parallel
+      addLog(`Divided into internal batches. Launching parallel generation streams...`);
+
+      let planIdx = 0;
+      const runWorker = async () => {
+        while (planIdx < batchPlans.length && questionsList.length < targetCount) {
+          const plan = batchPlans[planIdx++];
+          if (!plan || questionsList.length >= targetCount) break;
+          const needed = targetCount - questionsList.length;
+          const toRequest = Math.min(plan.count, needed);
+          if (toRequest <= 0) break;
+
+          const avoid = questionsList.slice(-20).map((q) => q.question);
+          try {
+            await streamBatch(plan.text, toRequest, avoid);
+          } catch (err) {
+            addLog(`[Batch Warning] ${err instanceof Error ? err.message : err}. Will retry...`);
+          }
+        }
+      };
+
+      const concurrency = Math.min(3, initialBatchesCount);
       const workers = [];
-      const concurrency = Math.min(3, totalBatches);
       for (let w = 0; w < concurrency; w++) {
-        workers.push(runNextBatch());
+        workers.push(runWorker());
       }
       await Promise.all(workers);
 
-      clearInterval(timerInterval);
+      // 4. Automatic retry loop (Requirements 3, 11, 12)
+      let retryAttempts = 0;
+      const MAX_RETRIES = 12;
 
-      console.log(`[11] MCQ generation completed (${questionsList.length} questions generated)`);
+      while (questionsList.length < targetCount && retryAttempts < MAX_RETRIES) {
+        retryAttempts++;
+        const remaining = targetCount - questionsList.length;
+        addLog(
+          `[Auto-Retry ${retryAttempts}] Target: ${targetCount}, Valid: ${questionsList.length}. Generating remaining ${remaining} questions...`,
+        );
 
-      if (questionsList.length === 0) {
+        const reqCount = Math.min(INTERNAL_BATCH_SIZE, remaining);
+        const retryText = getBatchText(retryAttempts, initialBatchesCount, finalActivePages);
+        const avoidList = questionsList.slice(-30).map((q) => q.question);
+
+        try {
+          await streamBatch(retryText, reqCount, avoidList);
+        } catch (err) {
+          addLog(`[Retry Error] ${err instanceof Error ? err.message : err}. Retrying in 1s...`);
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+      }
+
+      // 5. Final completion check (Requirement 12)
+      if (questionsList.length < targetCount) {
         throw new Error(
-          "No questions were generated by the AI model. Try verifying your API key or document text.",
+          `Could not generate all ${targetCount} questions. Received ${questionsList.length} valid unique questions.`,
         );
       }
 
+      const finalQuestions = questionsList.slice(0, targetCount);
+
+      clearInterval(timerInterval);
+
+      updateStep("generate", "done");
+      updateStep("dedup", "running");
+      await new Promise((r) => setTimeout(r, 200));
+      updateStep("dedup", "done");
+
+      updateStep("finalize", "running");
+
       // Save to IndexedDB caches
-      console.log("[12] Database save started");
       addLog("Saving extracted text and questions to IndexedDB Cache...");
       try {
         const fullExtractedText = allPagesList.map((pl) => pl.text).join("\n\n");
@@ -3903,38 +4026,28 @@ function ConfigureStage({
           chars: fullExtractedText.length,
           text: fullExtractedText,
           isScanned: scannedPagesCount > activePages.length * 0.6,
-          isMultilingual,
-          primaryLanguage,
-          languages,
+          isMultilingual: detectedLang.isMultilingual,
+          primaryLanguage: detectedLang.primaryLanguage,
+          languages: detectedLang.languages,
           pageList: allPagesList,
           lastModified: pdf.lastModified,
         };
 
-        // Save PDF text metadata cache
         await PDFCache.set(textCacheKey, finalPdfMeta);
-        // Save PDF questions cache
-        await PDFCache.set(questionsCacheKey, questionsList);
-        console.log("[13] Database save completed");
+        await PDFCache.set(questionsCacheKey, finalQuestions);
         addLog("Cache successfully saved.");
       } catch (err) {
         console.warn("Could not write cache to IndexedDB", err);
       }
 
-      logTamilStage(
-        "E",
-        "Final Validated MCQs Set",
-        `Total: ${questionsList.length} | Q1: ${questionsList[0]?.question}`
-      );
-
-      updateStep("generate", "done");
+      updateStep("finalize", "done");
       updateStep("complete", "done");
-      toast.success(`Success! Generated ${questionsList.length} questions.`);
+      toast.success(`Generation completed ✓ (${finalQuestions.length}/${targetCount} questions ready)`);
 
       const totalElapsed = Math.round((Date.now() - startTime) / 1000);
-      console.log("[14] Frontend completion");
       setTimeout(() => {
-        onFinished(questionsList, totalElapsed);
-      }, 800);
+        onFinished(finalQuestions, totalElapsed);
+      }, 700);
     } catch (e) {
       clearInterval(timerInterval);
       console.error("MCQ generation error:", e);
@@ -3943,7 +4056,6 @@ function ConfigureStage({
     } finally {
       clearInterval(timerInterval);
       setBusy(false);
-      console.log("[15] Loading state disabled (MCQ Generation Complete)");
     }
   }
 
@@ -4180,7 +4292,7 @@ function ConfigureStage({
           <Card className="p-8 bg-card/60 backdrop-blur-sm border-border space-y-8">
             <div>
               <div className="flex items-center justify-between">
-                <h2 className="text-2xl font-bold tracking-tight">AI MCQ Engine active...</h2>
+                <h2 className="text-2xl font-bold tracking-tight">Generating MCQs...</h2>
                 <div className="text-sm font-mono bg-indigo-500/10 text-indigo-400 px-3 py-1 rounded-md">
                   Elapsed: {genTime}s
                 </div>
@@ -4197,33 +4309,31 @@ function ConfigureStage({
                   Progress
                 </div>
                 <div className="text-xl font-extrabold mt-1 text-primary">
-                  {pipelineProgress.percent}%
+                  {Math.min(100, Math.round((liveQuestions.length / count) * 100))}%
                 </div>
               </div>
               <div className="p-3 bg-indigo-500/5 rounded-xl border border-indigo-500/10 text-center">
                 <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
-                  Current Page
+                  Questions Generated
                 </div>
                 <div className="text-xl font-extrabold mt-1 text-primary">
-                  {pipelineProgress.currentPage}
+                  {liveQuestions.length} / {count}
                 </div>
               </div>
               <div className="p-3 bg-indigo-500/5 rounded-xl border border-indigo-500/10 text-center">
                 <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
-                  Pages Left
+                  Questions Remaining
                 </div>
                 <div className="text-xl font-extrabold mt-1 text-primary">
-                  {pipelineProgress.remainingPages}
+                  {Math.max(0, count - liveQuestions.length)}
                 </div>
               </div>
               <div className="p-3 bg-indigo-500/5 rounded-xl border border-indigo-500/10 text-center">
                 <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
-                  Time Remaining
+                  Elapsed Time
                 </div>
                 <div className="text-xl font-extrabold mt-1 text-primary text-indigo-400">
-                  {pipelineProgress.estimatedTimeSec > 0
-                    ? `${pipelineProgress.estimatedTimeSec}s`
-                    : "Calculating..."}
+                  {genTime}s
                 </div>
               </div>
             </div>
@@ -4247,17 +4357,26 @@ function ConfigureStage({
                     {isDone && <CheckCircle2 className="h-5 w-5 text-emerald-500 shrink-0" />}
                     {isError && <XCircle className="h-5 w-5 text-destructive shrink-0" />}
 
-                    <span
-                      className={`font-medium ${
-                        isDone
-                          ? "text-muted-foreground line-through decoration-muted-foreground/40"
-                          : isRunning
-                            ? "text-foreground font-semibold"
-                            : "text-muted-foreground"
-                      }`}
-                    >
-                      {step.label}
-                    </span>
+                    <div className="flex flex-col">
+                      <span
+                        className={`font-medium ${
+                          isDone
+                            ? "text-emerald-500 font-semibold"
+                            : isRunning
+                              ? "text-foreground font-semibold"
+                              : "text-muted-foreground"
+                        }`}
+                      >
+                        {isDone
+                          ? `✓ ${step.id === "finalize" ? `${count} / ${count} questions ready` : step.doneLabel}`
+                          : step.activeLabel}
+                      </span>
+                      {isRunning && step.id === "generate" && (
+                        <span className="text-xs text-indigo-400 font-mono mt-0.5">
+                          Question {liveQuestions.length} / {count}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 );
               })}
@@ -4284,16 +4403,16 @@ function ConfigureStage({
             {/* Live question count and preview */}
             <div className="space-y-3.5 border-t border-border/40 pt-6">
               <div className="flex items-center justify-between">
-                <span className="text-sm font-semibold">Live Extracted Count:</span>
+                <span className="text-sm font-semibold">Valid Unique Questions:</span>
                 <Badge className="bg-emerald-500 hover:bg-emerald-600 font-bold">
                   {liveQuestions.length} / {count}
                 </Badge>
               </div>
 
               {liveQuestions.length > 0 && (
-                <div className="p-4 rounded-xl border border-indigo-500/20 bg-indigo-500/5 text-sm animate-pulse space-y-1">
+                <div className="p-4 rounded-xl border border-indigo-500/20 bg-indigo-500/5 text-sm space-y-1">
                   <span className="text-xs text-indigo-400 font-bold uppercase tracking-wider">
-                    Latest Streamed question
+                    Latest Streamed Question
                   </span>
                   <p className="font-bold text-foreground line-clamp-2">
                     {liveQuestions[liveQuestions.length - 1].question}
@@ -4305,7 +4424,7 @@ function ConfigureStage({
               <div className="w-full bg-muted/50 rounded-full h-2 overflow-hidden mt-4">
                 <div
                   className="bg-indigo-500 h-2 rounded-full transition-all duration-300"
-                  style={{ width: `${Math.round((liveQuestions.length / count) * 100)}%` }}
+                  style={{ width: `${Math.min(100, Math.round((liveQuestions.length / count) * 100))}%` }}
                 />
               </div>
             </div>

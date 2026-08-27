@@ -69,6 +69,40 @@ async function getEmbeddedTamilFont(): Promise<string | null> {
   return null;
 }
 
+// Cached Canvas 2D context for native browser color parsing
+let _colorCanvasCtx: CanvasRenderingContext2D | null = null;
+function getCanvasColorConverter(): CanvasRenderingContext2D | null {
+  if (typeof document === "undefined") return null;
+  if (!_colorCanvasCtx) {
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = 1;
+      canvas.height = 1;
+      _colorCanvasCtx = canvas.getContext("2d", { willReadFrequently: true });
+    } catch {
+      _colorCanvasCtx = null;
+    }
+  }
+  return _colorCanvasCtx;
+}
+
+/**
+ * Checks whether a CSS value contains modern, unsupported color functions
+ * that crash html2canvas (e.g. oklch, lab, lch, color-mix, light-dark).
+ */
+export function isUnsupportedColor(str: string | null | undefined): boolean {
+  if (!str || typeof str !== "string") return false;
+  const lower = str.toLowerCase();
+  return (
+    lower.includes("oklch") ||
+    lower.includes("lab(") ||
+    lower.includes("lch(") ||
+    lower.includes("color-mix") ||
+    lower.includes("color(") ||
+    lower.includes("light-dark")
+  );
+}
+
 /**
  * Mathematical conversion from OKLCH color space to standard sRGB.
  * Guarantees crisp, exact color parity with website preview while
@@ -137,10 +171,62 @@ export function sanitizeCssColors(css: string): string {
   // 3. Fallback: Catch any non-standard or complex oklch expressions
   sanitized = sanitized.replace(/oklch\([^)]+\)/gi, "#1e293b");
 
-  // 4. Catch color(display-p3 ...) or color(srgb ...)
+  // 4. Catch color-mix(...)
+  sanitized = sanitized.replace(/color-mix\([^)]+\)/gi, "#4f46e5");
+
+  // 5. Catch color(display-p3 ...) or color(srgb ...)
   sanitized = sanitized.replace(/color\([^)]+\)/gi, "#1e293b");
 
   return sanitized;
+}
+
+/**
+ * Converts any modern CSS color string to a PDF-safe standard sRGB (rgb, rgba, or hex).
+ * First checks browser 2D canvas, then applies mathematical OKLCH conversion fallback.
+ */
+export function convertAnyColorToRgb(colorStr: string | null | undefined): string {
+  if (!colorStr || typeof colorStr !== "string") return colorStr || "";
+  const trimmed = colorStr.trim();
+  if (!trimmed) return trimmed;
+
+  if (
+    !isUnsupportedColor(trimmed) &&
+    (trimmed.startsWith("#") ||
+      trimmed.startsWith("rgb(") ||
+      trimmed.startsWith("rgba(") ||
+      trimmed === "transparent" ||
+      trimmed === "inherit" ||
+      trimmed === "initial" ||
+      trimmed === "none")
+  ) {
+    return trimmed;
+  }
+
+  // 1. Try Browser Native Canvas 2D parsing (Chrome natively converts any modern color to rgb/hex)
+  const ctx = getCanvasColorConverter();
+  if (ctx) {
+    try {
+      ctx.fillStyle = "rgba(0, 0, 0, 0.001)";
+      ctx.fillStyle = trimmed;
+      const parsed = ctx.fillStyle;
+      if (parsed && parsed !== "rgba(0, 0, 0, 0.001)") {
+        return parsed;
+      }
+    } catch {}
+  }
+
+  // 2. Mathematical OKLCH converter fallback
+  return sanitizeCssColors(trimmed);
+}
+
+/**
+ * Sanitizes complex properties (like box-shadow or background-image) that may contain
+ * multiple colors or gradient stops with unsupported color functions.
+ */
+export function sanitizeComplexProperty(propValue: string | null | undefined): string {
+  if (!propValue || typeof propValue !== "string") return propValue || "";
+  if (!isUnsupportedColor(propValue)) return propValue;
+  return sanitizeCssColors(propValue);
 }
 
 /**
@@ -221,57 +307,177 @@ export async function generateStudyMaterialPdf(
       logging: false,
       backgroundColor: "#ffffff",
       windowWidth: targetEl.scrollWidth || 820,
-      onclone: (clonedDoc) => {
-        // 1. Gather all CSS rules from same-origin document.styleSheets
-        let combinedCss = "";
+      onclone: (clonedDoc, clonedTarget) => {
+        // [A] Prevent html2canvas from reading oklch on <html> and <body> root containers
         try {
-          if (typeof document !== "undefined") {
-            for (let i = 0; i < document.styleSheets.length; i++) {
-              const sheet = document.styleSheets[i];
-              try {
-                const rules = sheet.cssRules || sheet.rules;
-                if (rules) {
-                  for (let j = 0; j < rules.length; j++) {
-                    combinedCss += rules[j].cssText + "\n";
-                  }
-                }
-              } catch {
-                // Ignore cross-origin sheet errors (e.g. Google fonts)
-              }
-            }
-          }
+          const docElStyle = window.getComputedStyle(document.documentElement);
+          const docBg = docElStyle.backgroundColor;
+          clonedDoc.documentElement.style.backgroundColor = isUnsupportedColor(docBg)
+            ? convertAnyColorToRgb(docBg)
+            : docBg && docBg !== "rgba(0, 0, 0, 0)"
+            ? docBg
+            : "#ffffff";
+          clonedDoc.documentElement.style.color = "#0f172a";
+
+          const bodyStyle = window.getComputedStyle(document.body);
+          const bodyBg = bodyStyle.backgroundColor;
+          clonedDoc.body.style.backgroundColor = isUnsupportedColor(bodyBg)
+            ? convertAnyColorToRgb(bodyBg)
+            : bodyBg && bodyBg !== "rgba(0, 0, 0, 0)"
+            ? bodyBg
+            : "#ffffff";
+          clonedDoc.body.style.color = "#0f172a";
         } catch {}
 
-        // 2. Remove all external <link rel="stylesheet"> that are NOT external web fonts
-        // This prevents html2canvas from downloading external CSS files containing oklch over the network
-        clonedDoc.querySelectorAll("link[rel='stylesheet']").forEach((link) => {
-          const href = link.getAttribute("href") || "";
-          if (!href.includes("fonts.googleapis.com") && !href.includes("font") && !href.includes("cdn")) {
-            link.remove();
+        // [B] Inject PDF-safe CSS variable overrides for Tailwind themes into cloned document head
+        const safeVars = `
+          :root, html, body, *, *::before, *::after {
+            --color-slate-950: #020617 !important;
+            --color-slate-900: #0f172a !important;
+            --color-slate-800: #1e293b !important;
+            --color-slate-700: #334155 !important;
+            --color-slate-600: #475569 !important;
+            --color-slate-500: #64748b !important;
+            --color-slate-400: #94a3b8 !important;
+            --color-slate-300: #cbd5e1 !important;
+            --color-slate-200: #e2e8f0 !important;
+            --color-slate-100: #f1f5f9 !important;
+            --color-slate-50: #f8fafc !important;
+            --color-indigo-950: #1e1b4b !important;
+            --color-indigo-900: #312e81 !important;
+            --color-indigo-800: #3730a3 !important;
+            --color-indigo-700: #4338ca !important;
+            --color-indigo-600: #4f46e5 !important;
+            --color-indigo-500: #6366f1 !important;
+            --color-indigo-400: #818cf8 !important;
+            --color-indigo-300: #a5b4fc !important;
+            --color-indigo-200: #c7d2fe !important;
+            --color-indigo-100: #e0e7ff !important;
+            --color-indigo-50: #eef2ff !important;
+            --color-emerald-800: #065f46 !important;
+            --color-emerald-700: #047857 !important;
+            --color-emerald-600: #059669 !important;
+            --color-emerald-500: #10b981 !important;
+            --color-amber-800: #92400e !important;
+            --color-amber-700: #b45309 !important;
+            --color-amber-600: #d97706 !important;
+            --color-amber-500: #f59e0b !important;
+            --color-primary: #1a40ff !important;
+            --color-primary-foreground: #ffffff !important;
+            --color-background: #ffffff !important;
+            --color-foreground: #0f172a !important;
+            --color-card: #ffffff !important;
+            --color-card-foreground: #0f172a !important;
+            --color-muted: #f1f5f9 !important;
+            --color-muted-foreground: #64748b !important;
+            --color-border: #e2e8f0 !important;
+            --primary: #1a40ff !important;
+            --background: #ffffff !important;
+            --foreground: #0f172a !important;
+            --card: #ffffff !important;
+            --border: #e2e8f0 !important;
           }
-        });
+        `;
+        const varStyle = clonedDoc.createElement("style");
+        varStyle.id = "pdf-safe-variable-overrides";
+        varStyle.textContent = safeVars;
+        clonedDoc.head.appendChild(varStyle);
 
-        // 3. Sanitize all existing <style> tags in cloned document
+        // [C] COMPUTED STYLE RESOLUTION: Walk every element and resolve computed colors to sRGB
+        try {
+          const srcElements = [targetEl, ...Array.from(targetEl.querySelectorAll<HTMLElement>("*"))];
+          const clonedElements = [
+            clonedTarget,
+            ...Array.from(clonedTarget.querySelectorAll<HTMLElement>("*")),
+          ];
+
+          const minLen = Math.min(srcElements.length, clonedElements.length);
+          for (let i = 0; i < minLen; i++) {
+            const src = srcElements[i];
+            const cloned = clonedElements[i];
+            if (!src || !cloned) continue;
+
+            const computed = window.getComputedStyle(src);
+
+            // 1. Text color
+            const c = computed.color;
+            if (isUnsupportedColor(c)) {
+              cloned.style.color = convertAnyColorToRgb(c);
+            }
+
+            // 2. Background color
+            const bg = computed.backgroundColor;
+            if (isUnsupportedColor(bg)) {
+              cloned.style.backgroundColor = convertAnyColorToRgb(bg);
+            }
+
+            // 3. Border colors (top, right, bottom, left)
+            const bTop = computed.borderTopColor;
+            if (isUnsupportedColor(bTop)) cloned.style.borderTopColor = convertAnyColorToRgb(bTop);
+
+            const bRight = computed.borderRightColor;
+            if (isUnsupportedColor(bRight)) cloned.style.borderRightColor = convertAnyColorToRgb(bRight);
+
+            const bBottom = computed.borderBottomColor;
+            if (isUnsupportedColor(bBottom)) cloned.style.borderBottomColor = convertAnyColorToRgb(bBottom);
+
+            const bLeft = computed.borderLeftColor;
+            if (isUnsupportedColor(bLeft)) cloned.style.borderLeftColor = convertAnyColorToRgb(bLeft);
+
+            // 4. Outline color
+            const outline = computed.outlineColor;
+            if (isUnsupportedColor(outline)) {
+              cloned.style.outlineColor = convertAnyColorToRgb(outline);
+            }
+
+            // 5. Box shadow
+            const shadow = computed.boxShadow;
+            if (shadow && shadow !== "none" && isUnsupportedColor(shadow)) {
+              cloned.style.boxShadow = sanitizeComplexProperty(shadow);
+            }
+
+            // 6. Text shadow
+            const textShadow = computed.textShadow;
+            if (textShadow && textShadow !== "none" && isUnsupportedColor(textShadow)) {
+              cloned.style.textShadow = sanitizeComplexProperty(textShadow);
+            }
+
+            // 7. Background image (linear-gradients with oklch)
+            const bgImg = computed.backgroundImage;
+            if (bgImg && bgImg !== "none" && isUnsupportedColor(bgImg)) {
+              cloned.style.backgroundImage = sanitizeComplexProperty(bgImg);
+            }
+
+            // 8. SVG icon fills and strokes
+            if (src instanceof SVGElement) {
+              const fill = computed.fill;
+              if (isUnsupportedColor(fill)) (cloned as any).style.fill = convertAnyColorToRgb(fill);
+              const stroke = computed.stroke;
+              if (isUnsupportedColor(stroke)) (cloned as any).style.stroke = convertAnyColorToRgb(stroke);
+            }
+
+            // 9. Sanitize inline style attribute
+            const inlineStyle = cloned.getAttribute("style");
+            if (inlineStyle && isUnsupportedColor(inlineStyle)) {
+              cloned.setAttribute("style", sanitizeComplexProperty(inlineStyle));
+            }
+          }
+        } catch (walkErr) {
+          console.warn("[PDF Export] Computed style walk notice:", walkErr);
+        }
+
+        // [D] Sanitize all existing <style> blocks in the cloned document
         clonedDoc.querySelectorAll("style").forEach((styleEl) => {
-          if (styleEl.textContent && styleEl.textContent.includes("oklch")) {
+          if (styleEl.textContent && isUnsupportedColor(styleEl.textContent)) {
             styleEl.textContent = sanitizeCssColors(styleEl.textContent);
           }
         });
 
-        // 4. Inject the sanitized combined CSS into cloned document head
-        if (combinedCss) {
-          const sanitizedStyle = clonedDoc.createElement("style");
-          sanitizedStyle.id = "injected-sanitized-css";
-          sanitizedStyle.textContent = sanitizeCssColors(combinedCss);
-          clonedDoc.head.appendChild(sanitizedStyle);
-        }
-
-        // 5. Walk all elements in the cloned document and fix any inline oklch styles
-        const allElements = clonedDoc.querySelectorAll<HTMLElement>("*");
-        allElements.forEach((el) => {
-          const styleAttr = el.getAttribute("style");
-          if (styleAttr && styleAttr.includes("oklch")) {
-            el.setAttribute("style", sanitizeCssColors(styleAttr));
+        // [E] Remove remote app stylesheets to prevent html2canvas from re-downloading un-sanitized CSS
+        clonedDoc.querySelectorAll("link[rel='stylesheet']").forEach((link) => {
+          const href = link.getAttribute("href") || "";
+          if (!href.includes("fonts.googleapis.com") && !href.includes("font") && !href.includes("cdn")) {
+            link.remove();
           }
         });
       },
